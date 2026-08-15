@@ -10,14 +10,16 @@ import {
   type Ratings,
   type ScoringModel,
   type Severity,
+  type Commendation,
+  type CommendationType,
 } from '../lib/api'
-import { Avatar, Banner, GradeBadge, Skeleton } from '../components/ui'
+import { Avatar, Banner, Skeleton, TierBadge } from '../components/ui'
 
 const DIMENSION_FIELDS: { key: keyof Ratings; label: string; hint: string }[] = [
-  { key: 'house_rules', label: 'House rules compliance', hint: 'Did they follow what the listing asked?' },
-  { key: 'property_care', label: 'Property care', hint: 'Condition the place was left in.' },
-  { key: 'communication', label: 'Communication', hint: 'Responsiveness and clarity, start to finish.' },
-  { key: 'noise', label: 'Noise & neighbor impact', hint: 'Any disruption to neighbors or the building.' },
+  { key: 'house_rules', label: 'Hotel policy compliance', hint: 'Smoking, pets, occupancy, quiet hours.' },
+  { key: 'property_care', label: 'Room condition', hint: 'State the room was left in at checkout.' },
+  { key: 'communication', label: 'Staff interaction', hint: 'How the guest dealt with front desk and housekeeping.' },
+  { key: 'noise', label: 'Noise & other guests', hint: 'Any disturbance to neighbouring rooms.' },
   { key: 'accuracy', label: 'Booking accuracy', hint: 'Did the party match the reservation?' },
 ]
 
@@ -39,6 +41,7 @@ export default function SubmitReview() {
     accuracy: 4,
   })
   const [incidents, setIncidents] = useState<Incident[]>([])
+  const [commendations, setCommendations] = useState<Commendation[]>([])
   const [comment, setComment] = useState('')
   const [property, setProperty] = useState('')
 
@@ -51,6 +54,14 @@ export default function SubmitReview() {
     api.listGuests({ sort: 'name' }).then((r) => setGuests(r.guests)).catch(() => setGuests([]))
     api.scoringModel().then(setModel).catch(() => setModel(null))
   }, [])
+
+  const toggleCommendation = (type: CommendationType) => {
+    setCommendations((prev) =>
+      prev.some((c) => c.type === type)
+        ? prev.filter((c) => c.type !== type)
+        : [...prev, { type }],
+    )
+  }
 
   const toggleIncident = (type: IncidentType) => {
     setIncidents((prev) =>
@@ -74,7 +85,7 @@ export default function SubmitReview() {
     setFormError(null)
 
     if (!selected) {
-      setFieldErrors({ guest_id: 'Pick the guest you are rating.' })
+      setFieldErrors({ guest_id: 'Pick the guest whose stay you are recording.' })
       return
     }
 
@@ -85,6 +96,7 @@ export default function SubmitReview() {
         property_name: property || undefined,
         ratings,
         incidents,
+        commendations,
         comment,
       })
       setResult(res)
@@ -110,8 +122,8 @@ export default function SubmitReview() {
     return (
       <>
         <div className="page-head">
-          <h1>Assessment recorded</h1>
-          <p>Here is exactly how your review moved this guest's score.</p>
+          <h1>Stay recorded</h1>
+          <p>Here is exactly how this stay moved the guest's standing.</p>
         </div>
 
         <div className="card" style={{ maxWidth: 640 }}>
@@ -120,8 +132,8 @@ export default function SubmitReview() {
             <div>
               <div style={{ fontWeight: 620, fontSize: 17 }}>{guest?.name ?? result.review.guest_id}</div>
               <div style={{ fontSize: 13.5, color: 'var(--text-secondary)' }}>
-                {result.score_after.review_count} stay
-                {result.score_after.review_count === 1 ? '' : 's'} on record
+                {result.score_after.stay_count} stay
+                {result.score_after.stay_count === 1 ? '' : 's'} on record
               </div>
             </div>
           </div>
@@ -134,7 +146,7 @@ export default function SubmitReview() {
               <div style={{ fontSize: 30, fontWeight: 650, fontVariantNumeric: 'tabular-nums', color: 'var(--text-secondary)' }}>
                 {result.score_before.rated ? result.score_before.composite.toFixed(1) : '—'}
               </div>
-              <GradeBadge score={result.score_before} />
+              <TierBadge score={result.score_before} />
             </div>
 
             <div style={{ fontSize: 22, color: 'var(--text-muted)' }} aria-hidden="true">
@@ -148,7 +160,7 @@ export default function SubmitReview() {
               <div style={{ fontSize: 30, fontWeight: 650, fontVariantNumeric: 'tabular-nums' }}>
                 {result.score_after.composite.toFixed(1)}
               </div>
-              <GradeBadge score={result.score_after} />
+              <TierBadge score={result.score_after} />
             </div>
 
             <div style={{ marginLeft: 'auto' }}>
@@ -182,7 +194,7 @@ export default function SubmitReview() {
                 setProperty('')
               }}
             >
-              Rate another guest
+              Record another stay
             </button>
           </div>
         </div>
@@ -194,10 +206,10 @@ export default function SubmitReview() {
   return (
     <>
       <div className="page-head">
-        <h1>Rate a guest</h1>
+        <h1>Record a stay</h1>
         <p>
-          Rate each dimension from 1 to 5 and flag anything that went wrong. Weights are shown so you
-          can see which answers move the score most.
+          Rate each dimension from 1 to 5, then flag anything that went wrong or especially right.
+          Weights are shown so you can see which answers move the guest's standing most.
         </p>
       </div>
 
@@ -236,7 +248,7 @@ export default function SubmitReview() {
               style={{ width: '100%' }}
               value={property}
               onChange={(e) => setProperty(e.target.value)}
-              placeholder="e.g. Cedar Loft — Downtown"
+              placeholder="e.g. Grand Meridian — Downtown"
             />
           </div>
         </div>
@@ -280,8 +292,7 @@ export default function SubmitReview() {
         <div className="card" style={{ marginBottom: 16 }}>
           <h2 className="card-title">Incidents</h2>
           <p className="card-sub">
-            Only flag what actually happened. Penalties are applied on top of the ratings and fade with
-            time.
+            Only flag what actually happened. Penalties apply on top of the ratings and fade with time.
           </p>
 
           <div style={{ display: 'grid', gap: 8 }}>
@@ -344,12 +355,56 @@ export default function SubmitReview() {
         </div>
 
         <div className="card" style={{ marginBottom: 16 }}>
+          <h2 className="card-title">Commendations</h2>
+          <p className="card-sub">
+            Positive events that move the score up. Worth less than the matching penalties — standing
+            should be slower to earn than to lose.
+          </p>
+
+          <div style={{ display: 'grid', gap: 8 }}>
+            {(model?.commendation_catalog ?? []).map((c) => {
+              const active = commendations.some((x) => x.type === c.type)
+              return (
+                <label
+                  key={c.type}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    cursor: 'pointer',
+                    border: `1px solid ${active ? 'var(--status-good)' : 'var(--border)'}`,
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '10px 12px',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={active}
+                    onChange={() => toggleCommendation(c.type)}
+                    style={{ accentColor: 'var(--status-good)' }}
+                  />
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ fontWeight: 550, fontSize: 14 }}>{c.label}</span>
+                    <span style={{ display: 'block', fontSize: 12.5, color: 'var(--text-muted)' }}>
+                      {c.description}
+                    </span>
+                  </span>
+                  <span style={{ fontSize: 12.5, color: 'var(--success-text)', marginLeft: 'auto', whiteSpace: 'nowrap' }}>
+                    up to +{c.base_bonus} pts
+                  </span>
+                </label>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="card" style={{ marginBottom: 16 }}>
           <div className="field" style={{ marginBottom: 0 }}>
             <label className="field-label" htmlFor="comment">
               Written note
             </label>
             <p className="field-hint">
-              The part another host will actually read. Be specific and factual.
+              The part the next front-desk agent will actually read. Be specific and factual.
             </p>
             <textarea
               id="comment"
@@ -368,7 +423,7 @@ export default function SubmitReview() {
 
         <div style={{ display: 'flex', gap: 10 }}>
           <button className="btn" type="submit" disabled={submitting}>
-            {submitting ? 'Submitting…' : 'Submit assessment'}
+            {submitting ? 'Submitting…' : 'Save stay record'}
           </button>
           <Link to="/" className="btn btn-ghost" style={{ textDecoration: 'none' }}>
             Cancel

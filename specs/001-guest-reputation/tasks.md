@@ -1,4 +1,4 @@
-# Tasks: Guest Reputation Scoring
+# Tasks: Hotel Guest Standing & Discounts
 
 **Input**: Design documents from `/specs/001-guest-reputation/`
 
@@ -136,7 +136,34 @@ confidence, and recommendation all render from live API data.
 
 ---
 
-## Phase 7: Polish & Deployment
+## Phase 7: Domain realignment (added after the superseded app became readable)
+
+**Why**: the first build assumed short-term rentals and framed the product as
+booking screening. The prior implementation showed the real domain — hotels,
+with the score driving a loyalty tier and a discount. Backend, persistence and
+tests were kept; the model and surfaces were realigned.
+
+- [x] T069 Relabel dimensions in hotel terms (policy compliance, room condition, staff interaction)
+- [x] T070 Add `Commendation` type and catalogue in `internal/domain` — the upward channel the prior app expressed as "+10 room left in excellent condition"
+- [x] T071 Replace grade bands with `Tier` carrying name and discount; port the prior thresholds verbatim (90/70/50 → 20/15/10%)
+- [x] T072 Split `Recommendation` into `Handling`, separate from tier, so a recent severe incident flags a high-tier guest
+- [x] T073 Apply commendation bonuses with their own 270-day half-life
+- [x] T074 **Fix**: lift-and-clamp before deducting, so commendations cannot mask an incident (found by test: 10 commendations + severe damage scored an unchanged 100.0)
+- [x] T075 **Fix**: resolve the tier from the rounded composite (found in seed data: a guest displaying 90.0 sat in Premium and was told they were 0.0 points away)
+- [x] T076 Report next tier and points remaining
+- [x] T077 Expose the commendation catalogue and tiers via `/api/scoring-model`
+- [x] T078 Tier filter on the directory, tier distribution and average discount on `/api/stats`
+- [x] T079 Seed commendations across strong archetypes so all four tiers populate
+- [x] T080 Rewrite seed copy in hotel language (staff roles, properties, incident notes)
+- [x] T081 [P] `TierCard` and `DiscountCard` with progress to the next tier
+- [x] T082 [P] Commendation selection in the stay form; commendation badges on stay records
+- [x] T083 [P] Add a VIP colour token outside the status palette — a reward is not a state
+- [x] T084 Tests: tier thresholds match the prior app, commendations raise and can earn a tier, bonuses decay and cannot outrun severe incidents, tier agrees with the displayed score
+- [x] T085 Rewrite spec.md and plan.md around the real domain
+
+---
+
+## Phase 8: Polish & Deployment
 
 - [x] T061 [P] Scoring-model page rendered entirely from the API, hardcoding no constants
 - [x] T062 [P] Light and dark palettes, each selected for its own surface rather than machine-flipped
@@ -171,5 +198,7 @@ because the submission response reports a score delta.
 
 ## Status
 
-All 68 tasks complete. 37 tests, race-clean; 95% statement coverage on
-`internal/scoring`, 77% on `internal/api`.
+All 85 tasks complete. 42 tests, race-clean.
+
+Two defects were found by the tests written in Phase 7 rather than by review,
+and both are recorded above with the symptom that exposed them (T074, T075).

@@ -20,11 +20,11 @@ export type Severity = 'minor' | 'moderate' | 'severe'
 
 export type Confidence = 'none' | 'low' | 'medium' | 'high'
 
-export type Recommendation =
-  | 'accept'
-  | 'accept_with_conditions'
-  | 'manual_review'
-  | 'decline'
+export type Handling =
+  | 'vip_treatment'
+  | 'standard'
+  | 'watch'
+  | 'escalate'
   | 'insufficient_data'
 
 export interface Ratings {
@@ -41,6 +41,18 @@ export interface Incident {
   note?: string
 }
 
+export type CommendationType =
+  | 'exceptional_room_care'
+  | 'staff_commendation'
+  | 'repeat_stay'
+  | 'accommodating'
+  | 'referral'
+
+export interface Commendation {
+  type: CommendationType
+  note?: string
+}
+
 export interface DimensionScore {
   dimension: Dimension
   label: string
@@ -50,7 +62,7 @@ export interface DimensionScore {
 }
 
 export interface Factor {
-  kind: 'strength' | 'concern' | 'penalty' | 'context'
+  kind: 'strength' | 'concern' | 'penalty' | 'bonus' | 'context'
   description: string
   impact: number
 }
@@ -58,18 +70,34 @@ export interface Factor {
 export interface Score {
   rated: boolean
   composite: number
-  grade: string
-  grade_label: string
+
+  /** Loyalty standing and what it earns the guest. */
+  tier: string
+  discount_percent: number
+  deposit_multiplier: number
+  flagged: boolean
+  tier_note: string
+  points_to_next_tier: number
+  next_tier?: string
+
   confidence: Confidence
-  recommendation: Recommendation
+  handling: Handling
   headline: string
-  review_count: number
-  effective_review_count: number
+
+  stay_count: number
+  disputed_count: number
+  effective_stay_count: number
   incident_count: number
+  commendation_count: number
+
   raw_average: number
   adjusted_average: number
   base_score: number
   incident_penalty: number
+  commendation_bonus: number
+  tenure_bonus: number
+  tenure_years: number
+
   dimensions: DimensionScore[]
   factors: Factor[]
 }
@@ -98,8 +126,10 @@ export interface Review {
   property_id: string
   property_name: string
   stay_id: string
+  room_number?: string
   ratings: Ratings
   incidents: Incident[]
+  commendations: Commendation[]
   comment: string
   check_in: string
   check_out: string
@@ -119,7 +149,10 @@ export interface Stats {
   average_score: number
   guests_with_incidents: number
   total_incidents: number
-  band_distribution: Record<string, number>
+  tier_distribution: Record<string, number>
+  guests_with_discount: number
+  flagged_guests: number
+  average_discount: number
   dimension_averages: { dimension: Dimension; label: string; average: number }[]
   review_timeline: { month: string; count: number }[]
 }
@@ -130,11 +163,30 @@ export interface ScoringModel {
   incident_half_life_days: number
   prior_mean: number
   prior_strength: number
-  grade_bands: { min: number; grade: string; label: string; description: string }[]
+  commendation_half_life_days: number
+  score_min: number
+  score_max: number
+  new_guest_score: number
+  tenure_points_per_year: number
+  tenure_max_points: number
+  tiers: {
+    min: number
+    name: string
+    discount_percent: number
+    deposit_multiplier: number
+    flagged: boolean
+    description: string
+  }[]
   incident_catalog: {
     type: IncidentType
     label: string
     base_penalty: number
+    description: string
+  }[]
+  commendation_catalog: {
+    type: CommendationType
+    label: string
+    base_bonus: number
     description: string
   }[]
   severity_multipliers: Record<Severity, number>
@@ -200,7 +252,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export interface GuestQuery {
   q?: string
-  band?: string
+  tier?: string
   incidents?: boolean
   sort?: string
 }
@@ -211,7 +263,7 @@ export const api = {
   listGuests: (query: GuestQuery = {}) => {
     const p = new URLSearchParams()
     if (query.q) p.set('q', query.q)
-    if (query.band) p.set('band', query.band)
+    if (query.tier) p.set('tier', query.tier)
     if (query.incidents) p.set('incidents', 'true')
     if (query.sort) p.set('sort', query.sort)
     const qs = p.toString()
@@ -227,8 +279,10 @@ export const api = {
     guest_id: string
     stay_id?: string
     property_name?: string
+    room_number?: string
     ratings: Ratings
     incidents: Incident[]
+    commendations: Commendation[]
     comment: string
     check_in?: string
     check_out?: string

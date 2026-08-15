@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, type Review, type Stats } from '../lib/api'
-import { BandDistribution, DimensionBars, ReviewTimeline } from '../components/charts'
+import { DimensionBars, ReviewTimeline, TierDistribution } from '../components/charts'
 import { Empty, Skeleton, relativeDate } from '../components/ui'
 
 export default function Dashboard() {
@@ -25,8 +25,8 @@ export default function Dashboard() {
           <h1>Portfolio</h1>
         </div>
         <Empty title="No assessments yet">
-          Once you rate your first guest, this page will show your review activity, score distribution,
-          and incident history. <Link to="/review" style={{ color: 'var(--series-1)' }}>Rate a guest</Link> to
+          Once you record your first stay, this page will show your review activity, score distribution,
+          and incident history. <Link to="/review" style={{ color: 'var(--series-1)' }}>Record a stay</Link> to
           get started.
         </Empty>
       </>
@@ -59,6 +59,13 @@ export default function Dashboard() {
           <div className="stat-note">of scored guests</div>
         </div>
         <div className="stat">
+          <div className="stat-label">Avg discount</div>
+          <div className="stat-value">{stats.average_discount.toFixed(1)}%</div>
+          <div className="stat-note">
+            {stats.guests_with_discount} guest{stats.guests_with_discount === 1 ? '' : 's'} earning one
+          </div>
+        </div>
+        <div className="stat">
           <div className="stat-label">Incidents</div>
           <div className="stat-value">{stats.total_incidents}</div>
           <div className="stat-note">
@@ -69,9 +76,9 @@ export default function Dashboard() {
 
       <div className="grid grid-2" style={{ marginBottom: 16 }}>
         <div className="card">
-          <h2 className="card-title">Guests by grade</h2>
-          <p className="card-sub">How the guests you have hosted distribute across score bands.</p>
-          <BandDistribution bands={stats.band_distribution} />
+          <h2 className="card-title">Guests by tier</h2>
+          <p className="card-sub">How your guests distribute across loyalty tiers.</p>
+          <TierDistribution tiers={stats.tier_distribution} />
         </div>
 
         <div className="card">

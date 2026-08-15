@@ -1,13 +1,13 @@
-# Implementation Plan: Guest Reputation Scoring
+# Implementation Plan: Hotel Guest Standing & Discounts
 
 **Branch**: `001-guest-reputation` | **Spec**: [spec.md](./spec.md)
 
 ## Summary
 
-A Go stdlib HTTP API computes explainable guest reputation scores from
-host-submitted reviews, backed by a mutex-guarded in-memory store with
-JSON snapshot persistence. A Vite + React SPA consumes it: guest directory,
-guest profile with score breakdown, review submission, portfolio dashboard.
+A Go stdlib HTTP API computes explainable hotel guest standings from staff-filed
+stay records, backed by a mutex-guarded in-memory store with JSON snapshot
+persistence. A Vite + React SPA consumes it: guest directory, guest profile with
+tier, discount and score breakdown, stay recording, portfolio dashboard.
 
 ## Technical Context
 
@@ -65,11 +65,11 @@ quality value from its five dimensions:
 
 | Dimension | Weight | Why |
 |---|---|---|
-| House rules compliance | 0.28 | Strongest predictor of host risk; drives permits and complaints |
-| Property care | 0.26 | Direct financial exposure |
-| Communication | 0.18 | Determines cost of the stay in host attention |
-| Noise / neighbor impact | 0.16 | Externality; threatens the listing itself |
-| Accuracy of booking details | 0.12 | Party size and purpose misrepresentation |
+| Hotel policy compliance | 0.28 | Strongest predictor of cost and complaint volume |
+| Room condition | 0.26 | Direct financial exposure |
+| Staff interaction | 0.18 | Determines the cost of the stay in staff attention |
+| Noise / other guests | 0.16 | Externality; drives complaints from paying neighbours |
+| Booking accuracy | 0.12 | Occupancy and purpose misrepresentation |
 
 **Stage 2 — Time-decayed aggregation.** Each review carries weight
 `exp(-ln(2) · ageDays / halfLifeDays)` with a half-life of 365 days: a review is
@@ -86,30 +86,52 @@ adjusted = (prior·C + Σ(wᵢ·qᵢ)) / (C + Σwᵢ)
 Two reviews cannot outrun twenty. This is what makes FR-005 true and what makes
 the "low confidence" label honest rather than decorative.
 
-**Stage 4 — Incident penalties.** Applied after the 0–100 rescale, each incident
-deducts `basePenalty × severityMultiplier × recencyFactor`, where recency uses a
-180-day half-life. Penalties stack additively; the result floors at 0.
+**Stage 4 — Commendations, then incidents.** Both apply after the 0–100 rescale.
+Commendations add `baseBonus × recencyFactor` (270-day half-life); incidents
+deduct `basePenalty × severityMultiplier × recencyFactor` (180-day half-life).
+
+Order matters and the obvious `base - penalty + bonus` is wrong. Applied
+together, a pile of commendations pushes the raw total well above 100 where the
+clamp silently absorbs any penalty — during implementation a guest with ten
+commendations and a severe damage incident scored an unchanged 100.0. The engine
+lifts and clamps first, then deducts:
+
+```
+lifted    = clamp(base + bonus, 0, 100)
+composite = clamp(lifted - penalty, 0, 100)
+```
+
+Commendations can carry a guest to the ceiling; they cannot buy immunity.
+
+**Rounding.** The tier is resolved from the *rounded* composite, not the raw
+float. Resolving from the raw value produced a guest displaying 90.0 while
+sitting in Premium, because 89.96 is below the VIP floor — and simultaneously
+being told they were "0.0 points" away.
 
 Confidence is derived from effective review count (the sum of decay weights):
 < 1.5 low, < 4.0 medium, otherwise high.
 
-Grades: A ≥ 85, B ≥ 70, C ≥ 55, D ≥ 40, F below. Recommendations map from grade
-and incident presence — an A guest with a severe recent incident does not return
-"accept".
+**Tiers** carry over unchanged from the superseded implementation: VIP ≥ 90
+(20% off), Premium ≥ 70 (15%), Regular ≥ 50 (10%), Watch List below (0%).
+
+**Handling is separate from tier.** The tier is what the guest earns; handling is
+what the front desk should do. A guest can hold Premium on accumulated history
+and still warrant a flag at check-in after one recent severe incident. Collapsing
+both into one number would hide exactly the thing staff need to see.
 
 ## API Surface
 
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/health` | liveness |
-| GET | `/api/guests` | directory; `q`, `band`, `incidents`, `sort` params |
+| GET | `/api/guests` | directory; `q`, `tier`, `incidents`, `sort` params |
 | GET | `/api/guests/{id}` | profile with full score breakdown and reviews |
 | POST | `/api/guests` | create guest |
 | GET | `/api/guests/{id}/score` | score only |
-| POST | `/api/reviews` | submit review; returns score before/after and delta |
+| POST | `/api/reviews` | record a stay; returns score before/after and delta |
 | GET | `/api/reviews` | recent reviews across portfolio |
 | GET | `/api/stats` | dashboard aggregates |
-| GET | `/api/scoring-model` | weights, constants, grade bands — makes FR-007 self-documenting |
+| GET | `/api/scoring-model` | weights, constants, tiers, both catalogues — makes FR-007 self-documenting |
 
 Errors return `{"error": {"code", "message", "fields": {...}}}` with field-level
 detail on validation failures.
@@ -129,4 +151,5 @@ detail on validation failures.
 |---|---|
 | JSON-file store won't scale past a demo | `Store` is an interface; swap point documented in `store/README` |
 | Hand-tuned scoring constants are unvalidated | Exposed via `/api/scoring-model` and centralized in one struct for tuning |
+| Commendations could be used to launder a bad record | Bonuses are smaller than penalties, decay faster than ratings, and cannot mask a deduction (see stage 4) |
 | No auth means the demo API is open | Documented explicitly; API shaped so host identity threads through later |

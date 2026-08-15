@@ -125,8 +125,15 @@ func (s *Server) handleScoringModel(w http.ResponseWriter, r *http.Request) {
 		"incident_half_life_days": s.model.IncidentHalfLife,
 		"prior_mean":              s.model.PriorMean,
 		"prior_strength":          s.model.PriorStrength,
-		"grade_bands":             s.model.GradeBands,
+		"commendation_half_life_days": s.model.CommendationHalfLife,
+		"score_min":               s.model.ScoreMin,
+		"score_max":               s.model.ScoreMax,
+		"new_guest_score":         s.model.NewGuestScore,
+		"tenure_points_per_year":  s.model.TenurePointsPerYear,
+		"tenure_max_points":       s.model.TenureMaxPoints,
+		"tiers":                   s.model.Tiers,
 		"incident_catalog":        domain.IncidentCatalog,
+		"commendation_catalog":    domain.CommendationCatalog,
 		"severity_multipliers": map[string]float64{
 			string(domain.SevMinor):    domain.SevMinor.Multiplier(),
 			string(domain.SevModerate): domain.SevModerate.Multiplier(),
@@ -138,7 +145,10 @@ func (s *Server) handleScoringModel(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListGuests(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	search := strings.ToLower(strings.TrimSpace(q.Get("q")))
-	band := strings.ToUpper(strings.TrimSpace(q.Get("band")))
+	tier := strings.TrimSpace(q.Get("tier"))
+	if tier == "" {
+		tier = strings.TrimSpace(q.Get("band")) // legacy alias
+	}
 	onlyIncidents := q.Get("incidents") == "true"
 	sortBy := q.Get("sort")
 	if sortBy == "" {
@@ -168,7 +178,7 @@ func (s *Server) handleListGuests(w http.ResponseWriter, r *http.Request) {
 		}
 		sc := scoring.Compute(reviews, now, s.model)
 
-		if band != "" && sc.Grade != band {
+		if tier != "" && !strings.EqualFold(sc.Tier, tier) {
 			continue
 		}
 		if onlyIncidents && sc.IncidentCount == 0 {
@@ -211,7 +221,7 @@ func sortSummaries(out []GuestSummary, by string) {
 		sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	case "reviews":
 		sort.SliceStable(out, func(i, j int) bool {
-			return out[i].Score.ReviewCount > out[j].Score.ReviewCount
+			return out[i].Score.StayCount > out[j].Score.StayCount
 		})
 	case "recent":
 		sort.SliceStable(out, func(i, j int) bool {
@@ -225,12 +235,16 @@ func sortSummaries(out []GuestSummary, by string) {
 			return out[i].LastStayAt.After(*out[j].LastStayAt)
 		})
 	default: // "score"
+		// Every guest now carries a score — a new guest opens at the standard
+		// starting value rather than being unscored — so this sorts purely by
+		// standing. Ranking new guests last was right when they had no number;
+		// with an opening score it would misplace them below guests who have
+		// actually earned a worse one.
 		sort.SliceStable(out, func(i, j int) bool {
-			// Unrated guests sort below every rated guest instead of tying at 0.
-			if out[i].Score.Rated != out[j].Score.Rated {
-				return out[i].Score.Rated
+			if out[i].Score.Composite != out[j].Score.Composite {
+				return out[i].Score.Composite > out[j].Score.Composite
 			}
-			return out[i].Score.Composite > out[j].Score.Composite
+			return out[i].Name < out[j].Name
 		})
 	}
 }
@@ -407,7 +421,13 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 	now := s.now()
 
-	bands := map[string]int{"A": 0, "B": 0, "C": 0, "D": 0, "F": 0}
+	// Seed every tier so an absent tier reports 0 rather than vanishing.
+	tiers := map[string]int{}
+	for _, t := range s.model.Tiers {
+		tiers[t.Name] = 0
+	}
+	discountedGuests, flaggedGuests := 0, 0
+	var discountSum int
 	dimTotals := map[domain.Dimension]float64{}
 	dimCounts := map[domain.Dimension]int{}
 	var scoreSum float64
@@ -426,7 +446,14 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		}
 		rated++
 		scoreSum += sc.Composite
-		bands[sc.Grade]++
+		tiers[sc.Tier]++
+		if sc.DiscountPercent > 0 {
+			discountedGuests++
+			discountSum += sc.DiscountPercent
+		}
+		if sc.Flagged {
+			flaggedGuests++
+		}
 		if sc.IncidentCount > 0 {
 			withIncidents++
 			incidentTotal += sc.IncidentCount
@@ -460,6 +487,10 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	if rated > 0 {
 		avgScore = round1(scoreSum / float64(rated))
 	}
+	avgDiscount := 0.0
+	if rated > 0 {
+		avgDiscount = round1(float64(discountSum) / float64(rated))
+	}
 
 	// Review volume over the last 12 months, oldest bucket first.
 	type bucket struct {
@@ -487,7 +518,10 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		"average_score":         avgScore,
 		"guests_with_incidents": withIncidents,
 		"total_incidents":       incidentTotal,
-		"band_distribution":     bands,
+		"tier_distribution":     tiers,
+		"guests_with_discount":  discountedGuests,
+		"flagged_guests":        flaggedGuests,
+		"average_discount":      avgDiscount,
 		"dimension_averages":    dimAverages,
 		"review_timeline":       timeline,
 	})

@@ -282,6 +282,9 @@ func (s *FileStore) CreateReview(r domain.Review) (domain.Review, error) {
 	if r.Incidents == nil {
 		r.Incidents = []domain.Incident{}
 	}
+	if r.Commendations == nil {
+		r.Commendations = []domain.Commendation{}
+	}
 	s.reviews[r.ID] = r
 	s.stayKeys[key] = true
 	s.dirty = true
@@ -319,6 +322,9 @@ func (s *FileStore) LoadSeed(guests []domain.Guest, reviews []domain.Review) {
 	for _, r := range reviews {
 		if r.Incidents == nil {
 			r.Incidents = []domain.Incident{}
+		}
+		if r.Commendations == nil {
+			r.Commendations = []domain.Commendation{}
 		}
 		s.reviews[r.ID] = r
 		s.stayKeys[stayKey(r.HostID, r.StayID)] = true

@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api, type Factor, type GuestDetail, type Review } from '../lib/api'
 import { DimensionBars, ScoreComposition, ScoreDial } from '../components/charts'
+import { DiscountCard, TierCard } from '../components/tier'
 import {
   Avatar,
   ConfidenceChip,
   Empty,
-  RecommendationBadge,
+  HandlingBadge,
   Skeleton,
   formatDate,
   relativeDate,
@@ -16,6 +17,7 @@ const FACTOR_STYLE: Record<Factor['kind'], { bg: string; icon: string; label: st
   strength: { bg: 'var(--status-good)', icon: '↑', label: 'Strength' },
   concern: { bg: 'var(--status-warning)', icon: '↓', label: 'Concern' },
   penalty: { bg: 'var(--status-critical)', icon: '!', label: 'Penalty' },
+  bonus: { bg: 'var(--success-text)', icon: '+', label: 'Commendation' },
   context: { bg: 'var(--text-muted)', icon: 'i', label: 'Context' },
 }
 
@@ -56,7 +58,7 @@ function ReviewCard({ review }: { review: Review }) {
     <div className="review">
       <div className="review-head">
         <div>
-          <span className="review-who">{review.host_name || 'A host'}</span>
+          <span className="review-who">{review.host_name || 'Staff'}</span>
           {review.property_name && (
             <span style={{ color: 'var(--text-muted)', fontSize: 13 }}> · {review.property_name}</span>
           )}
@@ -85,6 +87,22 @@ function ReviewCard({ review }: { review: Review }) {
             >
               <span className="badge-dot" style={{ background: 'var(--status-critical)' }} />
               {inc.type.replace(/_/g, ' ')} · {inc.severity}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {review.commendations?.length > 0 && (
+        <div style={{ marginTop: 9, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {review.commendations.map((c, i) => (
+            <span
+              key={i}
+              className="badge"
+              style={{ borderColor: 'var(--status-good)', color: 'var(--text-primary)' }}
+              title={c.note}
+            >
+              <span className="badge-dot" style={{ background: 'var(--status-good)' }} />
+              {c.type.replace(/_/g, ' ')}
             </span>
           ))}
         </div>
@@ -162,7 +180,7 @@ export default function GuestProfile() {
           </div>
         </div>
         <Link to={`/review/${guest.id}`} className="btn" style={{ textDecoration: 'none' }}>
-          Rate this guest
+          Record a stay
         </Link>
       </div>
 
@@ -173,8 +191,8 @@ export default function GuestProfile() {
               <ScoreDial score={s} />
               <div style={{ flex: 1, minWidth: 240, display: 'grid', gap: 12 }}>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <RecommendationBadge rec={s.recommendation} />
-                  <ConfidenceChip confidence={s.confidence} effective={s.effective_review_count} />
+                  <HandlingBadge handling={s.handling} />
+                  <ConfidenceChip confidence={s.confidence} effective={s.effective_stay_count} />
                 </div>
                 <div className="headline-box">{s.headline}</div>
                 {s.rated && <ScoreComposition score={s} />}
@@ -204,8 +222,8 @@ export default function GuestProfile() {
             </p>
             {guest.reviews.length === 0 ? (
               <Empty title="Nothing on record">
-                This guest has never been rated. That is not a negative signal — fall back to standard ID
-                and payment verification.
+                No stays on record yet. That is not a negative signal — every guest starts here, and
+                the first recorded stay begins their history.
               </Empty>
             ) : (
               guest.reviews.map((r) => <ReviewCard key={r.id} review={r} />)
@@ -214,6 +232,9 @@ export default function GuestProfile() {
         </div>
 
         <div style={{ display: 'grid', gap: 16 }}>
+          <TierCard score={s} />
+          <DiscountCard score={s} />
+
           <div className="card">
             <h2 className="card-title">Dimension breakdown</h2>
             <p className="card-sub">Recency-weighted average per dimension, with its weight in the composite.</p>
@@ -226,17 +247,21 @@ export default function GuestProfile() {
               <tbody>
                 <tr>
                   <td>Total stays</td>
-                  <td>{s.review_count}</td>
+                  <td>{s.stay_count}</td>
                 </tr>
                 <tr>
                   <td>Effective stays</td>
                   <td title="Sum of recency weights: older stays count for less">
-                    {s.effective_review_count.toFixed(1)}
+                    {s.effective_stay_count.toFixed(1)}
                   </td>
                 </tr>
                 <tr>
                   <td>Incidents</td>
                   <td>{s.incident_count}</td>
+                </tr>
+                <tr>
+                  <td>Commendations</td>
+                  <td>{s.commendation_count}</td>
                 </tr>
                 {s.rated && (
                   <>
@@ -251,6 +276,12 @@ export default function GuestProfile() {
                     <tr>
                       <td>Score before penalties</td>
                       <td>{s.base_score.toFixed(1)}</td>
+                    </tr>
+                    <tr>
+                      <td>Commendation bonus</td>
+                      <td style={{ color: s.commendation_bonus > 0 ? 'var(--success-text)' : undefined }}>
+                        {s.commendation_bonus > 0 ? `+${s.commendation_bonus.toFixed(1)}` : '0'}
+                      </td>
                     </tr>
                     <tr>
                       <td>Incident penalty</td>

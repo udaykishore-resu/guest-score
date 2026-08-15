@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type ScoringModel } from '../lib/api'
-import { Empty, Skeleton, gradeColor } from '../components/ui'
+import { Empty, Skeleton, tierColor } from '../components/ui'
 
 /** The scoring model page renders entirely from GET /api/scoring-model.
  *  No constant on this page is hardcoded in the frontend — if the backend
@@ -25,8 +25,8 @@ export default function ScoringModelPage() {
         <h1>How the score is calculated</h1>
         <p>
           These are the live values the engine is using right now, served from the API rather than
-          written into this page. A score you disagree with can be traced back to something on this
-          page.
+          written into this page. Every tier and discount a guest sees traces back to something on
+          this page.
         </p>
       </div>
 
@@ -142,37 +142,71 @@ export default function ScoringModelPage() {
           </p>
         </div>
 
-        <div className="card" style={{ gridColumn: '1 / -1' }}>
-          <h2 className="card-title">Grade bands</h2>
-          <p className="card-sub">Where the final 0–100 composite lands.</p>
+        <div className="card">
+          <h2 className="card-title">Step 5 · Commendations</h2>
+          <p className="card-sub">
+            The upward channel. Bonuses are smaller than the matching penalties — standing should be
+            slower to earn than to lose — and fade on a {model.commendation_half_life_days}-day half-life.
+          </p>
           <table className="data-table">
             <thead>
               <tr>
-                <th style={{ width: 60 }}>Grade</th>
+                <th>Commendation</th>
+                <th>Bonus</th>
+              </tr>
+            </thead>
+            <tbody>
+              {model.commendation_catalog.map((c) => (
+                <tr key={c.type}>
+                  <td>
+                    {c.label}
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.description}</div>
+                  </td>
+                  <td style={{ color: 'var(--success-text)' }}>+{c.base_bonus}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 10 }}>
+            Commendations lift the score toward 100 before any penalty is deducted, so a guest can reach
+            the ceiling on merit but cannot buy immunity from an incident.
+          </p>
+        </div>
+
+        <div className="card" style={{ gridColumn: '1 / -1' }}>
+          <h2 className="card-title">Loyalty tiers</h2>
+          <p className="card-sub">Where the final 0–100 composite lands, and what it earns.</p>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th style={{ width: 110 }}>Tier</th>
                 <th>Meaning</th>
+                <th style={{ width: 90 }}>Discount</th>
                 <th style={{ textAlign: 'left' }}>Range</th>
               </tr>
             </thead>
             <tbody>
-              {model.grade_bands.map((b, i) => {
-                const upper = i === 0 ? 100 : model.grade_bands[i - 1].min - 0.1
+              {model.tiers.map((t, i) => {
+                const upper = i === 0 ? 100 : model.tiers[i - 1].min - 0.1
                 return (
-                  <tr key={b.grade}>
+                  <tr key={t.name}>
                     <td>
                       <span
                         className="badge"
-                        style={{ borderColor: gradeColor(b.grade), color: 'var(--text-primary)' }}
+                        style={{ borderColor: tierColor(t.name), color: 'var(--text-primary)' }}
                       >
-                        <span className="badge-dot" style={{ background: gradeColor(b.grade) }} />
-                        {b.grade}
+                        <span className="badge-dot" style={{ background: tierColor(t.name) }} />
+                        {t.name}
                       </span>
                     </td>
                     <td>
-                      <strong style={{ fontWeight: 570 }}>{b.label}</strong>
-                      <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{b.description}</div>
+                      <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{t.description}</div>
+                    </td>
+                    <td style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                      {t.discount_percent}%
                     </td>
                     <td style={{ textAlign: 'left', fontVariantNumeric: 'tabular-nums' }}>
-                      {b.min} – {upper.toFixed(upper % 1 === 0 ? 0 : 1)}
+                      {t.min} – {upper.toFixed(upper % 1 === 0 ? 0 : 1)}
                     </td>
                   </tr>
                 )

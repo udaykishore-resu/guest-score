@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { DimensionScore, Score } from '../lib/api'
-import { gradeColor } from './ui'
+import { tierColor } from './ui'
 
 /* Charts are hand-rolled SVG: four simple forms did not justify a charting
    dependency. Conventions follow the dataviz reference —
@@ -30,12 +30,13 @@ export function ScoreDial({ score, size = 168 }: { score: Score; size?: number }
   const stroke = 11
   const r = (size - stroke) / 2
   const circumference = 2 * Math.PI * r
-  const pct = score.rated ? score.composite / 100 : 0
+  // The published range is 0–1000; a new guest still has a score to draw.
+  const pct = Math.max(0, Math.min(1, score.composite / 1000))
   // Leave a 25% gap at the bottom so the arc reads as a gauge, not a pie.
   const arcSpan = 0.75
   const dash = circumference * arcSpan * pct
   const gap = circumference - dash
-  const color = gradeColor(score.grade)
+  const color = tierColor(score.tier)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
@@ -51,7 +52,7 @@ export function ScoreDial({ score, size = 168 }: { score: Score; size?: number }
             strokeLinecap="round"
             strokeDasharray={`${circumference * arcSpan} ${circumference * (1 - arcSpan)}`}
           />
-          {score.rated && (
+          {score.composite > 0 && (
             <circle
               cx={size / 2}
               cy={size / 2}
@@ -74,31 +75,25 @@ export function ScoreDial({ score, size = 168 }: { score: Score; size?: number }
             textAlign: 'center',
           }}
         >
-          {score.rated ? (
-            <div>
-              <div style={{ fontSize: size * 0.29, fontWeight: 660, letterSpacing: '-0.04em', lineHeight: 1 }}>
-                {score.composite.toFixed(0)}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>out of 100</div>
+          <div>
+            <div style={{ fontSize: size * 0.26, fontWeight: 660, letterSpacing: '-0.04em', lineHeight: 1 }}>
+              {score.composite.toFixed(0)}
             </div>
-          ) : (
-            <div>
-              <div style={{ fontSize: size * 0.2, fontWeight: 620, color: 'var(--text-muted)', lineHeight: 1 }}>
-                —
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>unrated</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+              {score.rated ? 'of 1000' : 'opening score'}
             </div>
-          )}
+          </div>
         </div>
       </div>
-      {score.rated && (
-        <div style={{ textAlign: 'center' }}>
-          <span style={{ fontSize: 15, fontWeight: 620 }}>
-            Grade {score.grade}
-          </span>
-          <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}> · {score.grade_label}</span>
-        </div>
-      )}
+      <div style={{ textAlign: 'center' }}>
+          <span style={{ fontSize: 15, fontWeight: 620 }}>{score.tier}</span>
+          {score.discount_percent > 0 && (
+            <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
+              {' · '}
+              {score.discount_percent}% discount
+            </span>
+          )}
+      </div>
     </div>
   )
 }
@@ -205,10 +200,10 @@ export function DimensionBars({
  *  letter is already on the axis, so colouring by rank would be redundant
  *  encoding, and the four status hues fail the adjacent normal-vision ΔE floor
  *  when placed side by side. The letters carry identity; length carries count. */
-export function BandDistribution({ bands }: { bands: Record<string, number> }) {
+export function TierDistribution({ tiers }: { tiers: Record<string, number> }) {
   const { show, hide, node } = useTooltip()
-  const order = ['A', 'B', 'C', 'D', 'F']
-  const rows = order.map((g) => ({ grade: g, count: bands[g] ?? 0 }))
+  const order = ['Excellent', 'Good', 'Fair', 'Poor']
+  const rows = order.map((g) => ({ grade: g, count: tiers[g] ?? 0 }))
   const max = Math.max(1, ...rows.map((r) => r.count))
   const total = rows.reduce((s, r) => s + r.count, 0)
   // labelPad reserves room above the tallest bar for its value label; without
@@ -216,14 +211,14 @@ export function BandDistribution({ bands }: { bands: Record<string, number> }) {
   const labelPad = 18
   const plotH = 118
   const height = plotH + labelPad
-  const barW = 40
-  const gapW = 20
+  const barW = 62
+  const gapW = 18
   const width = rows.length * barW + (rows.length - 1) * gapW
 
   return (
     <div>
       <svg width="100%" height={height + 28} viewBox={`0 0 ${width} ${height + 28}`} role="img"
-           aria-label="Guest count by grade band">
+           aria-label="Guest count by loyalty tier">
         <line x1={0} y1={height} x2={width} y2={height} stroke="var(--axis)" strokeWidth={1} />
         {rows.map((r, i) => {
           const h = r.count === 0 ? 0 : Math.max(3, (r.count / max) * plotH)
@@ -239,7 +234,7 @@ export function BandDistribution({ bands }: { bands: Record<string, number> }) {
                   rx={4}
                   fill="var(--series-1)"
                   onMouseMove={(e) =>
-                    show(e, `Grade ${r.grade}: ${r.count} guest${r.count === 1 ? '' : 's'}`)
+                    show(e, `${r.grade}: ${r.count} guest${r.count === 1 ? '' : 's'}`)
                   }
                   onMouseLeave={hide}
                 />
@@ -259,7 +254,7 @@ export function BandDistribution({ bands }: { bands: Record<string, number> }) {
                 x={x + barW / 2}
                 y={height + 18}
                 textAnchor="middle"
-                fontSize={13}
+                fontSize={11.5}
                 fontWeight={600}
                 fill="var(--text-secondary)"
               >
@@ -275,7 +270,7 @@ export function BandDistribution({ bands }: { bands: Record<string, number> }) {
         <table className="data-table">
           <thead>
             <tr>
-              <th>Grade</th>
+              <th>Tier</th>
               <th>Guests</th>
             </tr>
           </thead>
@@ -443,6 +438,12 @@ export function ScoreComposition({ score }: { score: Score }) {
         <span>
           Ratings gave <strong style={{ color: 'var(--text-primary)' }}>{basePct.toFixed(1)}</strong>
         </span>
+        {score.commendation_bonus > 0 && (
+          <span>
+            Commendations added{' '}
+            <strong style={{ color: 'var(--success-text)' }}>+{score.commendation_bonus.toFixed(1)}</strong>
+          </span>
+        )}
         {score.incident_penalty > 0 && (
           <span>
             Incidents took{' '}

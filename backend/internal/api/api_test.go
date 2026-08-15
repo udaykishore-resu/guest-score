@@ -79,17 +79,10 @@ func TestListGuests_ReturnsScoredDirectory(t *testing.T) {
 	if got.Total == 0 {
 		t.Fatal("seeded store returned no guests")
 	}
-	// Default sort is score descending, with unrated guests last.
-	seenUnrated := false
-	prev := 101.0
+	// Default sort is score descending across every guest, including those
+	// still on their opening score.
+	prev := scoring.DefaultModel.ScoreMax + 1
 	for _, g := range got.Guests {
-		if !g.Score.Rated {
-			seenUnrated = true
-			continue
-		}
-		if seenUnrated {
-			t.Error("a rated guest sorted after an unrated one")
-		}
 		if g.Score.Composite > prev {
 			t.Errorf("guests not sorted by score descending: %.1f after %.1f", g.Score.Composite, prev)
 		}
@@ -134,14 +127,14 @@ func TestListGuests_FilterByIncidents(t *testing.T) {
 	}
 }
 
-func TestListGuests_FilterByBand(t *testing.T) {
+func TestListGuests_FilterByTier(t *testing.T) {
 	h, _ := newTestServer(t)
-	for _, band := range []string{"A", "B", "C", "D", "F"} {
-		rec := do(t, h, "GET", "/api/guests?band="+band, nil)
+	for _, tier := range []string{"Excellent", "Good", "Fair", "Poor"} {
+		rec := do(t, h, "GET", "/api/guests?tier="+url.QueryEscape(tier), nil)
 		got := decode[listGuestsResponse](t, rec)
 		for _, g := range got.Guests {
-			if g.Score.Grade != band {
-				t.Errorf("band=%s returned a guest graded %s", band, g.Score.Grade)
+			if g.Score.Tier != tier {
+				t.Errorf("tier=%s returned a guest in tier %s", tier, g.Score.Tier)
 			}
 		}
 	}
@@ -167,10 +160,17 @@ func TestGetGuest_UnratedIsNotZero(t *testing.T) {
 	rec := do(t, h, "GET", "/api/guests/"+unratedID, nil)
 	got := decode[GuestDetail](t, rec)
 	if got.Score.Rated {
-		t.Error("a guest with no reviews must not be reported as rated")
+		t.Error("an opening balance must not be reported as an earned standing")
 	}
-	if got.Score.Recommendation != scoring.RecInsufficient {
-		t.Errorf("recommendation = %q, want %q", got.Score.Recommendation, scoring.RecInsufficient)
+	if got.Score.Composite != scoring.DefaultModel.NewGuestScore {
+		t.Errorf("new guest opens at %.0f, want %.0f",
+			got.Score.Composite, scoring.DefaultModel.NewGuestScore)
+	}
+	if got.Score.Tier != "New" {
+		t.Errorf("new guest tier = %q, want \"New\"", got.Score.Tier)
+	}
+	if got.Score.Handling != scoring.HandlingInsufficient {
+		t.Errorf("handling = %q, want %q", got.Score.Handling, scoring.HandlingInsufficient)
 	}
 	if len(got.Score.Factors) == 0 {
 		t.Error("even an unrated guest should explain why there is no score")
@@ -212,7 +212,7 @@ func TestGetGuest_ScoreIsExplained(t *testing.T) {
 		if got.Score.Headline == "" {
 			t.Errorf("%s: score returned with no headline", g.Name)
 		}
-		if got.Score.Grade == "" {
+		if got.Score.Tier == "" {
 			t.Errorf("%s: score returned with no grade", g.Name)
 		}
 	}
@@ -246,9 +246,9 @@ func TestCreateReview_HappyPath(t *testing.T) {
 	if !got.ScoreAfter.Rated {
 		t.Error("score after submission should be rated")
 	}
-	if got.ScoreAfter.ReviewCount != got.ScoreBefore.ReviewCount+1 {
+	if got.ScoreAfter.StayCount != got.ScoreBefore.StayCount+1 {
 		t.Errorf("review count did not increase: before=%d after=%d",
-			got.ScoreBefore.ReviewCount, got.ScoreAfter.ReviewCount)
+			got.ScoreBefore.StayCount, got.ScoreAfter.StayCount)
 	}
 
 	// The review must actually be readable back, not merely echoed.
@@ -534,13 +534,13 @@ func TestStats_ReconcilesWithUnderlyingData(t *testing.T) {
 		t.Errorf("rated(%d) + unrated(%d) != total guests(%d)", rated, unrated, len(guests))
 	}
 
-	bands := stats["band_distribution"].(map[string]any)
+	tiers := stats["tier_distribution"].(map[string]any)
 	sum := 0
-	for _, v := range bands {
+	for _, v := range tiers {
 		sum += int(v.(float64))
 	}
 	if sum != rated {
-		t.Errorf("band distribution sums to %d, want %d rated guests", sum, rated)
+		t.Errorf("tier distribution sums to %d, want %d rated guests", sum, rated)
 	}
 
 	if len(stats["review_timeline"].([]any)) != 12 {

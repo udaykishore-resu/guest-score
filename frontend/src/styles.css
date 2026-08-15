@@ -29,6 +29,12 @@
   --status-critical: #d03b3b;
   --success-text: #006300;
 
+  /* VIP sits outside the status palette on purpose: it is a reward, not a
+     state, and reusing status-good for both flattens the top tier into
+     'everything is fine'. Violet is categorical slot 7, distinct from every
+     status hue. */
+  --tier-vip: #4a3aa7;
+
   --shadow-sm: 0 1px 2px rgba(11, 11, 11, 0.05);
   --shadow-md: 0 2px 8px rgba(11, 11, 11, 0.07), 0 1px 2px rgba(11, 11, 11, 0.04);
 
@@ -54,6 +60,7 @@
     --series-1: #3987e5;
     --series-1-soft: #184f95;
     --success-text: #0ca30c;
+  --tier-vip: #9085e9;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
   }
@@ -74,6 +81,7 @@
   --series-1: #3987e5;
   --series-1-soft: #184f95;
   --success-text: #0ca30c;
+  --tier-vip: #9085e9;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
 }

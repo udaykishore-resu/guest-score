@@ -41,7 +41,7 @@ export default function App() {
             Directory
           </NavLink>
           <NavLink to="/dashboard">Portfolio</NavLink>
-          <NavLink to="/review">Rate a guest</NavLink>
+          <NavLink to="/review">Record a stay</NavLink>
           <NavLink to="/model">Scoring model</NavLink>
         </nav>
         <button

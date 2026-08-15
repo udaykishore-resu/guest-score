@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, type GuestSummary } from '../lib/api'
-import { Avatar, ConfidenceChip, Empty, GradeBadge, RecommendationBadge, Skeleton, relativeDate } from '../components/ui'
+import { Avatar, ConfidenceChip, Empty, HandlingBadge, Skeleton, TierBadge, relativeDate } from '../components/ui'
 
 /** useDebounced keeps typing in the search box from firing a request per
  *  keystroke, which matters as soon as the directory is bigger than a demo. */
@@ -16,7 +16,7 @@ function useDebounced<T>(value: T, ms = 220): T {
 
 export default function Directory() {
   const [search, setSearch] = useState('')
-  const [band, setBand] = useState('')
+  const [tier, setTier] = useState('')
   const [incidents, setIncidents] = useState(false)
   const [sort, setSort] = useState('score')
 
@@ -29,7 +29,7 @@ export default function Directory() {
     let cancelled = false
     setError(null)
     api
-      .listGuests({ q: debounced, band, incidents, sort })
+      .listGuests({ q: debounced, tier, incidents, sort })
       .then((r) => {
         if (!cancelled) setGuests(r.guests)
       })
@@ -39,7 +39,7 @@ export default function Directory() {
     return () => {
       cancelled = true
     }
-  }, [debounced, band, incidents, sort])
+  }, [debounced, tier, incidents, sort])
 
   const summary = useMemo(() => {
     if (!guests) return null
@@ -52,8 +52,8 @@ export default function Directory() {
       <div className="page-head">
         <h1>Guest directory</h1>
         <p>
-          Look up a guest before you accept their booking. Every score is computed from host
-          assessments, weighted by recency, and shown with the reasoning behind it.
+          Look up any guest to see their standing, the discount it earns, and the reasoning
+          behind it. Scores are computed from recorded stays and weighted by recency.
         </p>
       </div>
 
@@ -66,13 +66,12 @@ export default function Directory() {
           onChange={(e) => setSearch(e.target.value)}
           aria-label="Search guests"
         />
-        <select className="select" value={band} onChange={(e) => setBand(e.target.value)} aria-label="Filter by grade">
-          <option value="">All grades</option>
-          <option value="A">Grade A</option>
-          <option value="B">Grade B</option>
-          <option value="C">Grade C</option>
-          <option value="D">Grade D</option>
-          <option value="F">Grade F</option>
+        <select className="select" value={tier} onChange={(e) => setTier(e.target.value)} aria-label="Filter by tier">
+          <option value="">All tiers</option>
+          <option value="Excellent">Excellent</option>
+          <option value="Good">Good</option>
+          <option value="Fair">Fair</option>
+          <option value="Poor">Poor</option>
         </select>
         <select className="select" value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Sort guests">
           <option value="score">Highest score</option>
@@ -96,7 +95,7 @@ export default function Directory() {
 
       {guests && guests.length === 0 && (
         <Empty title="No guests match those filters">
-          Try clearing the search box or widening the grade filter.
+          Try clearing the search box or widening the tier filter.
         </Empty>
       )}
 
@@ -105,9 +104,9 @@ export default function Directory() {
           <div className="row-head">
             <span>Guest</span>
             <span>Score</span>
-            <span>Grade</span>
+            <span>Tier</span>
             <span>Stays</span>
-            <span>Recommendation</span>
+            <span>Handling</span>
           </div>
           {guests.map((g) => (
             <Link to={`/guests/${g.id}`} key={g.id} className="guest-row">
@@ -142,15 +141,15 @@ export default function Directory() {
               </div>
 
               <div>
-                <GradeBadge score={g.score} />
+                <TierBadge score={g.score} />
               </div>
 
               <div style={{ fontSize: 13.5, color: 'var(--text-secondary)' }}>
-                {g.score.review_count === 0 ? (
+                {g.score.stay_count === 0 ? (
                   <span style={{ color: 'var(--text-muted)' }}>none</span>
                 ) : (
                   <>
-                    {g.score.review_count} stay{g.score.review_count === 1 ? '' : 's'}
+                    {g.score.stay_count} stay{g.score.stay_count === 1 ? '' : 's'}
                     {g.score.incident_count > 0 && (
                       <div style={{ fontSize: 12, color: 'var(--status-serious)', fontWeight: 550 }}>
                         {g.score.incident_count} incident{g.score.incident_count === 1 ? '' : 's'}
@@ -161,9 +160,9 @@ export default function Directory() {
               </div>
 
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                <RecommendationBadge rec={g.score.recommendation} />
+                <HandlingBadge handling={g.score.handling} />
                 {g.score.rated && (
-                  <ConfidenceChip confidence={g.score.confidence} effective={g.score.effective_review_count} />
+                  <ConfidenceChip confidence={g.score.confidence} effective={g.score.effective_stay_count} />
                 )}
               </div>
             </Link>

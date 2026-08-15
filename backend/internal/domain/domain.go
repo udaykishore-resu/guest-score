@@ -32,17 +32,17 @@ var AllDimensions = []Dimension{
 	DimAccuracy,
 }
 
-// Label returns the human-readable name of a dimension.
+// Label returns the human-readable name of a dimension, in hotel terms.
 func (d Dimension) Label() string {
 	switch d {
 	case DimHouseRules:
-		return "House rules compliance"
+		return "Hotel policy compliance"
 	case DimPropertyCare:
-		return "Property care"
+		return "Room condition"
 	case DimCommunication:
-		return "Communication"
+		return "Staff interaction"
 	case DimNoise:
-		return "Noise & neighbor impact"
+		return "Noise & other guests"
 	case DimAccuracy:
 		return "Booking accuracy"
 	}
@@ -103,6 +103,9 @@ const (
 	IncRulesViolation    IncidentType = "house_rules_violation"
 	IncLateCheckout      IncidentType = "late_checkout"
 	IncPaymentIssue      IncidentType = "payment_issue"
+	// Named in the disclosure's incident categories alongside policy violations,
+	// damage, and payment issues.
+	IncMisconduct IncidentType = "general_misconduct"
 )
 
 // IncidentCatalogEntry describes an incident type for the API and UI.
@@ -115,13 +118,22 @@ type IncidentCatalogEntry struct {
 
 // IncidentCatalog is the published list of incident types and their base
 // penalties in composite-score points, before severity and recency scaling.
+// Penalties are expressed directly in bureau points on the 300–850 scale, so
+// there is one unit throughout the engine and no hidden conversion factor.
+// Base penalties are in points on the published 0–1000 scale, before severity
+// and recency scaling. They are calibrated to the two worked examples in the
+// invention disclosure:
+//
+//	"Minor policy violation: −50 points"  → policy violation 100 × minor 0.5  = 50
+//	"Severe property damage: −100 points" → property damage  56 × severe 1.8 ≈ 100
 var IncidentCatalog = []IncidentCatalogEntry{
-	{IncPropertyDamage, "Property damage", 14.0, "Physical damage to the property or its contents."},
-	{IncUnauthorizedGuest, "Unauthorized guests", 10.0, "More occupants than the booking allowed, or an unapproved party."},
-	{IncNoiseComplaint, "Noise complaint", 9.0, "A complaint from neighbors, building management, or local authorities."},
-	{IncRulesViolation, "House rules violation", 7.0, "Smoking, pets, or other explicitly prohibited conduct."},
-	{IncPaymentIssue, "Payment issue", 6.0, "Chargeback, failed payment, or refusal to settle documented charges."},
-	{IncLateCheckout, "Late checkout", 3.0, "Departure past the agreed time without arrangement."},
+	{IncRulesViolation, "Hotel policy violation", 100.0, "Smoking in a non-smoking room, pets, or other explicitly prohibited conduct."},
+	{IncMisconduct, "General misconduct", 90.0, "Abusive or threatening behaviour toward staff or other guests."},
+	{IncUnauthorizedGuest, "Unauthorized occupants", 70.0, "More occupants than the reservation allowed, or an unapproved gathering."},
+	{IncPaymentIssue, "Payment issue", 65.0, "Bounced payment, chargeback, or an unpaid bill."},
+	{IncPropertyDamage, "Property damage", 56.0, "Physical damage to the room or its contents."},
+	{IncNoiseComplaint, "Noise complaint", 50.0, "A complaint from neighbouring rooms, security, or local authorities."},
+	{IncLateCheckout, "Late checkout", 25.0, "Departure past the agreed time without arrangement."},
 }
 
 // BasePenalty returns the unscaled point penalty for an incident type.
@@ -181,14 +193,169 @@ func (s Severity) Valid() bool {
 	return s == SevMinor || s == SevModerate || s == SevSevere
 }
 
-// Incident is a discrete negative event attached to a review.
+// Incident is a discrete negative event attached to a stay record.
 type Incident struct {
 	Type     IncidentType `json:"type"`
 	Severity Severity     `json:"severity"`
 	Note     string       `json:"note,omitempty"`
+	// Evidence references supporting material (photo URLs, document IDs). The
+	// disclosure requires incident reports to carry evidence; a score that can
+	// deny someone a booking should not rest on an unsupported assertion.
+	Evidence []string `json:"evidence,omitempty"`
 }
 
-// Guest is a person who stays at properties.
+// CommendationType enumerates the discrete positive events staff may record.
+//
+// The original app moved a running balance by explicit deltas in both
+// directions — "-5 late checkout" but also "+10 room left in excellent
+// condition". Penalties alone cannot express that, and without an upward
+// channel a loyalty tier is unreachable for all but flawless guests, so
+// commendations are a first-class counterpart to incidents.
+type CommendationType string
+
+const (
+	ComExceptionalCare  CommendationType = "exceptional_room_care"
+	ComStaffPraise      CommendationType = "staff_commendation"
+	ComLoyalReturn      CommendationType = "repeat_stay"
+	ComEarlyFlexibility CommendationType = "accommodating"
+	ComReferral         CommendationType = "referral"
+)
+
+// CommendationCatalogEntry describes a commendation type for the API and UI.
+type CommendationCatalogEntry struct {
+	Type      CommendationType `json:"type"`
+	Label     string           `json:"label"`
+	BaseBonus float64          `json:"base_bonus"`
+	Description string         `json:"description"`
+}
+
+// CommendationCatalog is the published list of positive events and the points
+// they add, before recency scaling. Bonuses are deliberately smaller than the
+// matching penalties: earning tier status should be slower than losing it.
+// Bonuses are in points on the 0–1000 scale. Deliberately smaller per event
+// than the matching penalties: standing should be slower to earn than to lose.
+// The disclosure's "+100 for positive stays over a year" is handled separately
+// as the tenure factor, not as a single commendation.
+var CommendationCatalog = []CommendationCatalogEntry{
+	{ComExceptionalCare, "Exceptional room care", 30.0, "Room left in notably better condition than expected."},
+	{ComStaffPraise, "Staff commendation", 25.0, "Staff specifically noted this guest as a pleasure to host."},
+	{ComEarlyFlexibility, "Accommodating", 20.0, "Accepted a room change, early checkout, or similar without friction."},
+	{ComLoyalReturn, "Repeat stay", 15.0, "A returning guest with no issues on the stay."},
+	{ComReferral, "Referral", 15.0, "Referred another guest who completed a stay."},
+}
+
+// BaseBonus returns the unscaled point bonus for a commendation type.
+func (t CommendationType) BaseBonus() float64 {
+	for _, e := range CommendationCatalog {
+		if e.Type == t {
+			return e.BaseBonus
+		}
+	}
+	return 0
+}
+
+// Label returns the human-readable name of a commendation type.
+func (t CommendationType) Label() string {
+	for _, e := range CommendationCatalog {
+		if e.Type == t {
+			return e.Label
+		}
+	}
+	return string(t)
+}
+
+// Valid reports whether the commendation type is in the catalog.
+func (t CommendationType) Valid() bool {
+	for _, e := range CommendationCatalog {
+		if e.Type == t {
+			return true
+		}
+	}
+	return false
+}
+
+// Commendation is a discrete positive event attached to a stay record.
+type Commendation struct {
+	Type CommendationType `json:"type"`
+	Note string           `json:"note,omitempty"`
+}
+
+// Member is a reporting institution — an independent hotel or a chain. The
+// bureau model turns on this: members file stay records and any member can pull
+// any guest's score, so the guest carries one standing across all of them
+// rather than a private note at one chain.
+type Member struct {
+	ID       string    `json:"id"`
+	Name     string    `json:"name"`
+	Kind     string    `json:"kind"` // "chain" | "independent"
+	City     string    `json:"city,omitempty"`
+	JoinedAt time.Time `json:"joined_at"`
+}
+
+// InquiryPurpose records why a member pulled a score.
+type InquiryPurpose string
+
+const (
+	InquiryCheckIn InquiryPurpose = "check_in"
+	InquiryBooking InquiryPurpose = "booking"
+	InquiryReview  InquiryPurpose = "manual_review"
+)
+
+// Inquiry is a record that a member looked up a guest.
+//
+// Bureaus log this for the same reason credit bureaus do: the guest is entitled
+// to know who has been asking. Unlike a credit hard inquiry it does not affect
+// the score — a hotel checking a guest says nothing about that guest.
+type Inquiry struct {
+	ID         string         `json:"id"`
+	GuestID    string         `json:"guest_id"`
+	MemberID   string         `json:"member_id"`
+	MemberName string         `json:"member_name"`
+	Purpose    InquiryPurpose `json:"purpose"`
+	At         time.Time      `json:"at"`
+}
+
+// DisputeStatus tracks a guest's challenge to a stay record.
+type DisputeStatus string
+
+const (
+	DisputeNone     DisputeStatus = ""
+	DisputeOpen     DisputeStatus = "open"     // under review; excluded from scoring
+	DisputeUpheld   DisputeStatus = "upheld"   // guest was right; permanently excluded
+	DisputeRejected DisputeStatus = "rejected" // record stands; counts normally
+)
+
+// CountsTowardScore reports whether a record in this dispute state should be
+// scored. An open or upheld dispute is excluded — scoring a record the guest is
+// actively contesting, and which may be wrong, is the thing a dispute process
+// exists to prevent.
+func (d DisputeStatus) CountsTowardScore() bool {
+	return d != DisputeOpen && d != DisputeUpheld
+}
+
+// Label renders the dispute state for the UI.
+func (d DisputeStatus) Label() string {
+	switch d {
+	case DisputeOpen:
+		return "Disputed — under review"
+	case DisputeUpheld:
+		return "Disputed — removed"
+	case DisputeRejected:
+		return "Disputed — record stands"
+	}
+	return ""
+}
+
+// Dispute is a guest's challenge to one stay record.
+type Dispute struct {
+	Status     DisputeStatus `json:"status,omitempty"`
+	Reason     string        `json:"reason,omitempty"`
+	RaisedAt   *time.Time    `json:"raised_at,omitempty"`
+	ResolvedAt *time.Time    `json:"resolved_at,omitempty"`
+	Resolution string        `json:"resolution,omitempty"`
+}
+
+// Guest is a person who stays at member properties.
 //
 // Note that there is no score field. Per the spec, a score is always computed
 // from reviews and never stored; persisting it would let the two drift apart.
@@ -229,14 +396,22 @@ type Review struct {
 	HostName    string     `json:"host_name"`
 	PropertyID  string     `json:"property_id"`
 	PropertyName string    `json:"property_name"`
-	StayID      string     `json:"stay_id"`
-	Ratings     Ratings    `json:"ratings"`
-	Incidents   []Incident `json:"incidents"`
-	Comment     string     `json:"comment"`
-	CheckIn     time.Time  `json:"check_in"`
-	CheckOut    time.Time  `json:"check_out"`
-	SubmittedAt time.Time  `json:"submitted_at"`
+	MemberID      string         `json:"member_id"`
+	MemberName    string         `json:"member_name"`
+	StayID        string         `json:"stay_id"`
+	RoomNumber    string         `json:"room_number,omitempty"`
+	Ratings       Ratings        `json:"ratings"`
+	Incidents     []Incident     `json:"incidents"`
+	Commendations []Commendation `json:"commendations"`
+	Comment       string         `json:"comment"`
+	CheckIn       time.Time      `json:"check_in"`
+	CheckOut      time.Time      `json:"check_out"`
+	SubmittedAt   time.Time      `json:"submitted_at"`
+	Dispute       Dispute        `json:"dispute"`
 }
+
+// Scoreable reports whether this record feeds the score.
+func (r Review) Scoreable() bool { return r.Dispute.Status.CountsTowardScore() }
 
 // Validate enforces the review submission rules from the spec.
 func (r Review) Validate() FieldErrors {
@@ -259,6 +434,11 @@ func (r Review) Validate() FieldErrors {
 		}
 		if !inc.Severity.Valid() {
 			errs[fmt.Sprintf("incidents.%d.severity", i)] = fmt.Sprintf("must be minor, moderate, or severe, got %q", inc.Severity)
+		}
+	}
+	for i, com := range r.Commendations {
+		if !com.Type.Valid() {
+			errs[fmt.Sprintf("commendations.%d.type", i)] = fmt.Sprintf("unknown commendation type %q", com.Type)
 		}
 	}
 	if !r.CheckIn.IsZero() && !r.CheckOut.IsZero() && r.CheckOut.Before(r.CheckIn) {

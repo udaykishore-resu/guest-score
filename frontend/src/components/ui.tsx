@@ -1,23 +1,26 @@
-import type { Confidence, Recommendation, Score } from '../lib/api'
+import type { Confidence, Handling, Score } from '../lib/api'
 
-/** Status colour for a grade band. Never used as the sole signal — every
- *  caller pairs it with the grade letter and its label (dataviz status rule). */
-export function gradeColor(grade: string): string {
-  switch (grade) {
-    case 'A':
+/** Status colour for a loyalty tier. Never the sole signal — every caller
+ *  pairs it with the tier name (dataviz status rule). */
+export function tierColor(tier: string): string {
+  switch (tier) {
+    case 'Excellent':
+      return 'var(--tier-vip)'
+    case 'Good':
       return 'var(--status-good)'
-    case 'B':
-      return 'var(--status-good)'
-    case 'C':
+    case 'Fair':
       return 'var(--status-warning)'
-    case 'D':
-      return 'var(--status-serious)'
-    case 'F':
+    case 'Poor':
       return 'var(--status-critical)'
+    case 'New':
+      return 'var(--series-1)'
     default:
       return 'var(--text-muted)'
   }
 }
+
+/** Ordered highest standing first — the order every tier list renders in. */
+export const TIER_ORDER = ['Excellent', 'Good', 'Fair', 'Poor'] as const
 
 /** Deterministic avatar tint from the guest id, so a face is recognisable
  *  across pages. Drawn from the categorical ramp, not random hues. */
@@ -44,33 +47,27 @@ export function Avatar({ seed, name, size }: { seed: string; name: string; size?
   )
 }
 
-export function GradeBadge({ score }: { score: Score }) {
-  if (!score.rated) {
-    return (
-      <span className="badge" style={{ borderColor: 'var(--border-strong)', color: 'var(--text-muted)' }}>
-        Unrated
-      </span>
-    )
-  }
-  const color = gradeColor(score.grade)
+export function TierBadge({ score }: { score: Score }) {
+  const color = tierColor(score.tier)
   return (
     <span className="badge" style={{ borderColor: color, color: 'var(--text-primary)' }}>
       <span className="badge-dot" style={{ background: color }} />
-      {score.grade} · {score.grade_label}
+      {score.tier}
+      {score.discount_percent > 0 && ` · ${score.discount_percent}% off`}
     </span>
   )
 }
 
-const REC_TEXT: Record<Recommendation, { label: string; icon: string; color: string }> = {
-  accept: { label: 'Accept', icon: '✓', color: 'var(--status-good)' },
-  accept_with_conditions: { label: 'Accept with conditions', icon: '!', color: 'var(--status-warning)' },
-  manual_review: { label: 'Manual review', icon: '?', color: 'var(--status-serious)' },
-  decline: { label: 'Decline', icon: '×', color: 'var(--status-critical)' },
-  insufficient_data: { label: 'Not enough data', icon: '–', color: 'var(--text-muted)' },
+const HANDLING_TEXT: Record<Handling, { label: string; icon: string; color: string }> = {
+  vip_treatment: { label: 'Priority handling', icon: '★', color: 'var(--tier-vip)' },
+  standard: { label: 'Standard check-in', icon: '✓', color: 'var(--status-good)' },
+  watch: { label: 'Flag at check-in', icon: '!', color: 'var(--status-serious)' },
+  escalate: { label: 'Escalate to manager', icon: '×', color: 'var(--status-critical)' },
+  insufficient_data: { label: 'New guest', icon: '–', color: 'var(--series-1)' },
 }
 
-export function RecommendationBadge({ rec }: { rec: Recommendation }) {
-  const r = REC_TEXT[rec]
+export function HandlingBadge({ handling }: { handling: Handling }) {
+  const r = HANDLING_TEXT[handling]
   return (
     <span className="badge" style={{ borderColor: r.color, color: 'var(--text-primary)' }}>
       <span
