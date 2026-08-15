@@ -1,0 +1,380 @@
+import { useEffect, useState } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import {
+  ApiError,
+  api,
+  type CreateReviewResult,
+  type GuestSummary,
+  type Incident,
+  type IncidentType,
+  type Ratings,
+  type ScoringModel,
+  type Severity,
+} from '../lib/api'
+import { Avatar, Banner, GradeBadge, Skeleton } from '../components/ui'
+
+const DIMENSION_FIELDS: { key: keyof Ratings; label: string; hint: string }[] = [
+  { key: 'house_rules', label: 'House rules compliance', hint: 'Did they follow what the listing asked?' },
+  { key: 'property_care', label: 'Property care', hint: 'Condition the place was left in.' },
+  { key: 'communication', label: 'Communication', hint: 'Responsiveness and clarity, start to finish.' },
+  { key: 'noise', label: 'Noise & neighbor impact', hint: 'Any disruption to neighbors or the building.' },
+  { key: 'accuracy', label: 'Booking accuracy', hint: 'Did the party match the reservation?' },
+]
+
+const SEVERITIES: Severity[] = ['minor', 'moderate', 'severe']
+
+export default function SubmitReview() {
+  const { guestId } = useParams<{ guestId: string }>()
+  const navigate = useNavigate()
+
+  const [guests, setGuests] = useState<GuestSummary[] | null>(null)
+  const [model, setModel] = useState<ScoringModel | null>(null)
+
+  const [selected, setSelected] = useState(guestId ?? '')
+  const [ratings, setRatings] = useState<Ratings>({
+    house_rules: 4,
+    property_care: 4,
+    communication: 4,
+    noise: 4,
+    accuracy: 4,
+  })
+  const [incidents, setIncidents] = useState<Incident[]>([])
+  const [comment, setComment] = useState('')
+  const [property, setProperty] = useState('')
+
+  const [submitting, setSubmitting] = useState(false)
+  const [result, setResult] = useState<CreateReviewResult | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [formError, setFormError] = useState<string | null>(null)
+
+  useEffect(() => {
+    api.listGuests({ sort: 'name' }).then((r) => setGuests(r.guests)).catch(() => setGuests([]))
+    api.scoringModel().then(setModel).catch(() => setModel(null))
+  }, [])
+
+  const toggleIncident = (type: IncidentType) => {
+    setIncidents((prev) =>
+      prev.some((i) => i.type === type)
+        ? prev.filter((i) => i.type !== type)
+        : [...prev, { type, severity: 'moderate' as Severity }],
+    )
+  }
+
+  const setSeverity = (type: IncidentType, severity: Severity) => {
+    setIncidents((prev) => prev.map((i) => (i.type === type ? { ...i, severity } : i)))
+  }
+
+  const setNote = (type: IncidentType, note: string) => {
+    setIncidents((prev) => prev.map((i) => (i.type === type ? { ...i, note } : i)))
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setFieldErrors({})
+    setFormError(null)
+
+    if (!selected) {
+      setFieldErrors({ guest_id: 'Pick the guest you are rating.' })
+      return
+    }
+
+    setSubmitting(true)
+    try {
+      const res = await api.createReview({
+        guest_id: selected,
+        property_name: property || undefined,
+        ratings,
+        incidents,
+        comment,
+      })
+      setResult(res)
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setFieldErrors(err.fields)
+        setFormError(err.message)
+      } else {
+        setFormError('Something went wrong submitting the review.')
+      }
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (!guests) return <Skeleton count={4} height={110} />
+
+  // --- Success state: show what the review actually did to the score ---------
+  if (result) {
+    const delta = result.composite_delta
+    const guest = guests.find((g) => g.id === result.review.guest_id)
+    return (
+      <>
+        <div className="page-head">
+          <h1>Assessment recorded</h1>
+          <p>Here is exactly how your review moved this guest's score.</p>
+        </div>
+
+        <div className="card" style={{ maxWidth: 640 }}>
+          <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginBottom: 20 }}>
+            {guest && <Avatar seed={guest.avatar_seed} name={guest.name} />}
+            <div>
+              <div style={{ fontWeight: 620, fontSize: 17 }}>{guest?.name ?? result.review.guest_id}</div>
+              <div style={{ fontSize: 13.5, color: 'var(--text-secondary)' }}>
+                {result.score_after.review_count} stay
+                {result.score_after.review_count === 1 ? '' : 's'} on record
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 550 }}>
+                Before
+              </div>
+              <div style={{ fontSize: 30, fontWeight: 650, fontVariantNumeric: 'tabular-nums', color: 'var(--text-secondary)' }}>
+                {result.score_before.rated ? result.score_before.composite.toFixed(1) : '—'}
+              </div>
+              <GradeBadge score={result.score_before} />
+            </div>
+
+            <div style={{ fontSize: 22, color: 'var(--text-muted)' }} aria-hidden="true">
+              →
+            </div>
+
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 550 }}>
+                After
+              </div>
+              <div style={{ fontSize: 30, fontWeight: 650, fontVariantNumeric: 'tabular-nums' }}>
+                {result.score_after.composite.toFixed(1)}
+              </div>
+              <GradeBadge score={result.score_after} />
+            </div>
+
+            <div style={{ marginLeft: 'auto' }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 550 }}>
+                Change
+              </div>
+              <div
+                style={{
+                  fontSize: 26,
+                  fontWeight: 650,
+                  fontVariantNumeric: 'tabular-nums',
+                  color: delta >= 0 ? 'var(--success-text)' : 'var(--status-critical)',
+                }}
+              >
+                {delta >= 0 ? '+' : ''}
+                {delta.toFixed(1)}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, marginTop: 24, flexWrap: 'wrap' }}>
+            <button className="btn" onClick={() => navigate(`/guests/${result.review.guest_id}`)}>
+              View full profile
+            </button>
+            <button
+              className="btn btn-ghost"
+              onClick={() => {
+                setResult(null)
+                setComment('')
+                setIncidents([])
+                setProperty('')
+              }}
+            >
+              Rate another guest
+            </button>
+          </div>
+        </div>
+      </>
+    )
+  }
+
+  // --- Form ------------------------------------------------------------------
+  return (
+    <>
+      <div className="page-head">
+        <h1>Rate a guest</h1>
+        <p>
+          Rate each dimension from 1 to 5 and flag anything that went wrong. Weights are shown so you
+          can see which answers move the score most.
+        </p>
+      </div>
+
+      {formError && <Banner tone="bad">{formError}</Banner>}
+
+      <form onSubmit={submit} style={{ maxWidth: 680 }}>
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="field">
+            <label className="field-label" htmlFor="guest">
+              Guest
+            </label>
+            <select
+              id="guest"
+              className="select"
+              style={{ width: '100%' }}
+              value={selected}
+              onChange={(e) => setSelected(e.target.value)}
+            >
+              <option value="">Select a guest…</option>
+              {guests.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name} — {g.email}
+                </option>
+              ))}
+            </select>
+            {fieldErrors.guest_id && <div className="field-error">⚠ {fieldErrors.guest_id}</div>}
+          </div>
+
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label className="field-label" htmlFor="property">
+              Property <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span>
+            </label>
+            <input
+              id="property"
+              className="input"
+              style={{ width: '100%' }}
+              value={property}
+              onChange={(e) => setProperty(e.target.value)}
+              placeholder="e.g. Cedar Loft — Downtown"
+            />
+          </div>
+        </div>
+
+        <div className="card" style={{ marginBottom: 16 }}>
+          <h2 className="card-title">Ratings</h2>
+          <p className="card-sub">1 is poor, 5 is excellent. All five are required.</p>
+
+          {DIMENSION_FIELDS.map((f) => {
+            const weight = model?.dimensions.find((d) => d.dimension === f.key)?.weight
+            const err = fieldErrors[`ratings.${f.key}`]
+            return (
+              <div className="rating-row" key={f.key}>
+                <div className="rating-row-label">
+                  {f.label}
+                  {weight !== undefined && (
+                    <span className="rating-row-weight"> · {(weight * 100).toFixed(0)}% of score</span>
+                  )}
+                  <div style={{ fontSize: 12.5, color: 'var(--text-muted)', fontWeight: 400 }}>{f.hint}</div>
+                  {err && <div className="field-error">⚠ {err}</div>}
+                </div>
+                <div className="rating-choices" role="radiogroup" aria-label={f.label}>
+                  {[1, 2, 3, 4, 5].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      role="radio"
+                      aria-checked={ratings[f.key] === v}
+                      className={`rating-choice${ratings[f.key] === v ? ' selected' : ''}`}
+                      onClick={() => setRatings((r) => ({ ...r, [f.key]: v }))}
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="card" style={{ marginBottom: 16 }}>
+          <h2 className="card-title">Incidents</h2>
+          <p className="card-sub">
+            Only flag what actually happened. Penalties are applied on top of the ratings and fade with
+            time.
+          </p>
+
+          <div style={{ display: 'grid', gap: 8 }}>
+            {(model?.incident_catalog ?? []).map((c) => {
+              const active = incidents.find((i) => i.type === c.type)
+              return (
+                <div
+                  key={c.type}
+                  style={{
+                    border: `1px solid ${active ? 'var(--status-critical)' : 'var(--border)'}`,
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '10px 12px',
+                  }}
+                >
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={!!active}
+                      onChange={() => toggleIncident(c.type)}
+                      style={{ accentColor: 'var(--status-critical)' }}
+                    />
+                    <span style={{ fontWeight: 550, fontSize: 14 }}>{c.label}</span>
+                    <span style={{ fontSize: 12.5, color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                      up to −{c.base_penalty} pts
+                    </span>
+                  </label>
+                  <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginLeft: 27 }}>
+                    {c.description}
+                  </div>
+
+                  {active && (
+                    <div style={{ marginLeft: 27, marginTop: 10, display: 'grid', gap: 8 }}>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>Severity:</span>
+                        {SEVERITIES.map((sev) => (
+                          <button
+                            key={sev}
+                            type="button"
+                            className={`rating-choice${active.severity === sev ? ' selected' : ''}`}
+                            style={{ width: 'auto', padding: '0 12px', fontSize: 12.5 }}
+                            onClick={() => setSeverity(c.type, sev)}
+                          >
+                            {sev}
+                            {model && ` ×${model.severity_multipliers[sev]}`}
+                          </button>
+                        ))}
+                      </div>
+                      <input
+                        className="input"
+                        placeholder="What happened? (optional)"
+                        value={active.note ?? ''}
+                        onChange={(e) => setNote(c.type, e.target.value)}
+                      />
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label className="field-label" htmlFor="comment">
+              Written note
+            </label>
+            <p className="field-hint">
+              The part another host will actually read. Be specific and factual.
+            </p>
+            <textarea
+              id="comment"
+              className="input"
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              maxLength={2000}
+              placeholder="How did the stay go?"
+            />
+            {fieldErrors.comment && <div className="field-error">⚠ {fieldErrors.comment}</div>}
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'right', marginTop: 4 }}>
+              {comment.length} / 2000
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button className="btn" type="submit" disabled={submitting}>
+            {submitting ? 'Submitting…' : 'Submit assessment'}
+          </button>
+          <Link to="/" className="btn btn-ghost" style={{ textDecoration: 'none' }}>
+            Cancel
+          </Link>
+        </div>
+      </form>
+    </>
+  )
+}

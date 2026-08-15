@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+bin/
+*.exe
+
+# Runtime data (the JSON snapshot; regenerate with `make reseed`)
+data/
+*.json.tmp
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs & test output
+*.log
+coverage.out
+*.test
+tsconfig.tsbuildinfo
