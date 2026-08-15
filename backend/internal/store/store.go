@@ -29,7 +29,7 @@ var (
 // Query describes a guest directory lookup.
 type Query struct {
 	Search       string // case-insensitive substring over name and email
-	Band         string // "A".."F", or "" for all
+	Tier         string // "Excellent".."Poor", or "" for all
 	HasIncidents bool
 	Sort         string // "score" | "reviews" | "recent" | "name"
 	Limit        int
@@ -41,6 +41,11 @@ type Store interface {
 	ListGuests() ([]domain.Guest, error)
 	GetGuest(id string) (domain.Guest, error)
 	CreateGuest(g domain.Guest) (domain.Guest, error)
+
+	ResolveByDocument(hash string) (domain.Guest, bool)
+	AttachDocument(guestID string, doc domain.IdentityDocument) error
+	RecordInquiry(q domain.Inquiry)
+	InquiriesFor(guestID string) []domain.Inquiry
 
 	ReviewsForGuest(guestID string) ([]domain.Review, error)
 	AllReviews() ([]domain.Review, error)
@@ -62,6 +67,13 @@ type FileStore struct {
 	// than an O(n) scan on every write.
 	stayKeys map[string]bool
 
+	// docIndex maps a document hash to the profile it belongs to. This is the
+	// cross-border lookup: any document, from any country, reaches one file.
+	docIndex map[string]string
+
+	// inquiries records every lookup, newest appended last.
+	inquiries []domain.Inquiry
+
 	path    string
 	seq     atomic.Uint64
 	dirty   bool
@@ -72,8 +84,9 @@ type FileStore struct {
 type snapshot struct {
 	Version int             `json:"version"`
 	SavedAt time.Time       `json:"saved_at"`
-	Guests  []domain.Guest  `json:"guests"`
-	Reviews []domain.Review `json:"reviews"`
+	Guests    []domain.Guest   `json:"guests"`
+	Reviews   []domain.Review  `json:"reviews"`
+	Inquiries []domain.Inquiry `json:"inquiries,omitempty"`
 }
 
 // NewFileStore opens (or creates) a store at path. Passing an empty path gives
@@ -83,6 +96,7 @@ func NewFileStore(path string) (*FileStore, error) {
 		guests:   map[string]domain.Guest{},
 		reviews:  map[string]domain.Review{},
 		stayKeys: map[string]bool{},
+		docIndex: map[string]string{},
 		path:     path,
 		closing:  make(chan struct{}),
 	}
@@ -110,11 +124,13 @@ func (s *FileStore) load() error {
 	}
 	for _, g := range snap.Guests {
 		s.guests[g.ID] = g
+		s.indexDocuments(g)
 	}
 	for _, r := range snap.Reviews {
 		s.reviews[r.ID] = r
 		s.stayKeys[stayKey(r.HostID, r.StayID)] = true
 	}
+	s.inquiries = append(s.inquiries, snap.Inquiries...)
 	return nil
 }
 
@@ -152,6 +168,7 @@ func (s *FileStore) Flush() error {
 	for _, r := range s.reviews {
 		snap.Reviews = append(snap.Reviews, r)
 	}
+	snap.Inquiries = append(snap.Inquiries, s.inquiries...)
 	s.dirty = false
 	s.mu.Unlock()
 
@@ -231,6 +248,7 @@ func (s *FileStore) CreateGuest(g domain.Guest) (domain.Guest, error) {
 		g.AvatarSeed = g.ID
 	}
 	s.guests[g.ID] = g
+	s.indexDocuments(g)
 	s.dirty = true
 	return g, nil
 }
@@ -318,6 +336,7 @@ func (s *FileStore) LoadSeed(guests []domain.Guest, reviews []domain.Review) {
 	defer s.mu.Unlock()
 	for _, g := range guests {
 		s.guests[g.ID] = g
+		s.indexDocuments(g)
 	}
 	for _, r := range reviews {
 		if r.Incidents == nil {
@@ -330,4 +349,88 @@ func (s *FileStore) LoadSeed(guests []domain.Guest, reviews []domain.Review) {
 		s.stayKeys[stayKey(r.HostID, r.StayID)] = true
 	}
 	s.dirty = true
+}
+
+// --- Identity resolution -----------------------------------------------------
+
+// ResolveByDocument finds the profile a document belongs to.
+//
+// This is the mechanism that makes the file global. A member in Lisbon scans a
+// passport it has never seen; the hash matches one already attached to a file
+// opened in Mumbai, and the same standing comes back. Without this, each
+// country would accumulate its own disconnected profiles and a guest could
+// outrun a bad record by crossing a border.
+func (s *FileStore) ResolveByDocument(hash string) (domain.Guest, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	id, ok := s.docIndex[hash]
+	if !ok {
+		return domain.Guest{}, false
+	}
+	g, ok := s.guests[id]
+	return g, ok
+}
+
+// AttachDocument adds a document to an existing profile.
+//
+// Attaching a second document is how a domestic-only file becomes portable: a
+// guest who opened on an Aadhaar adds a passport, and from then on any country
+// can reach them. Re-presenting a document already on file is a no-op rather
+// than an error — the desk should not have to care whether it has seen this
+// passport before.
+func (s *FileStore) AttachDocument(guestID string, doc domain.IdentityDocument) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	g, ok := s.guests[guestID]
+	if !ok {
+		return fmt.Errorf("guest %q: %w", guestID, ErrNotFound)
+	}
+	if owner, taken := s.docIndex[doc.Hash]; taken {
+		if owner == guestID {
+			return nil // already attached
+		}
+		// The same document cannot belong to two people. This is the guard
+		// against silently merging or hijacking a file.
+		return fmt.Errorf("this document is already on another profile: %w", ErrDuplicate)
+	}
+	g.Documents = append(g.Documents, doc)
+	s.guests[guestID] = g
+	s.docIndex[doc.Hash] = guestID
+	s.dirty = true
+	return nil
+}
+
+// indexDocuments rebuilds the document index for one guest.
+func (s *FileStore) indexDocuments(g domain.Guest) {
+	for _, d := range g.Documents {
+		s.docIndex[d.Hash] = g.ID
+	}
+}
+
+// RecordInquiry logs that a member pulled a guest's file.
+func (s *FileStore) RecordInquiry(q domain.Inquiry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if q.ID == "" {
+		q.ID = s.nextID("q")
+	}
+	if q.At.IsZero() {
+		q.At = time.Now().UTC()
+	}
+	s.inquiries = append(s.inquiries, q)
+	s.dirty = true
+}
+
+// InquiriesFor returns a guest's inquiry history, newest first.
+func (s *FileStore) InquiriesFor(guestID string) []domain.Inquiry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := []domain.Inquiry{}
+	for i := len(s.inquiries) - 1; i >= 0; i-- {
+		if s.inquiries[i].GuestID == guestID {
+			out = append(out, s.inquiries[i])
+		}
+	}
+	return out
 }

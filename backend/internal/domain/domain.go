@@ -360,7 +360,21 @@ type Dispute struct {
 // Note that there is no score field. Per the spec, a score is always computed
 // from reviews and never stored; persisting it would let the two drift apart.
 type Guest struct {
-	ID        string    `json:"id"`
+	ID string `json:"id"`
+
+	// GlobalID is the bureau's permanent identifier — the thing that makes the
+	// file portable. A guest who opens a file in Mumbai on an Aadhaar and later
+	// presents a passport in Lisbon resolves to this same value, which is the
+	// entire deterrent: standing follows the person across borders.
+	GlobalID GlobalID `json:"global_id"`
+
+	// Nationality is the country whose documents opened the file.
+	Nationality Country `json:"nationality,omitempty"`
+
+	// Documents are the identity documents on file. Numbers are never stored,
+	// only keyed hashes and the last four characters (see identity.go).
+	Documents []IdentityDocument `json:"documents"`
+
 	Name      string    `json:"name"`
 	Email     string    `json:"email"`
 	Phone     string    `json:"phone,omitempty"`

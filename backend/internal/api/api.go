@@ -28,7 +28,20 @@ type Server struct {
 	// now is injected so handler tests can pin the evaluation instant and get
 	// the same determinism the scoring tests rely on.
 	now func() scoring.Time
+
+	// verifier confirms documents with their issuing authority.
+	verifier Verifier
+
+	// identityKey is the HMAC key for document hashes. Rotating it orphans
+	// every stored hash, so it belongs in configuration, not in code.
+	identityKey []byte
 }
+
+// WithVerifier overrides the document verifier.
+func WithVerifier(v Verifier) Option { return func(s *Server) { s.verifier = v } }
+
+// WithIdentityKey sets the HMAC key used to hash identity documents.
+func WithIdentityKey(k []byte) Option { return func(s *Server) { s.identityKey = k } }
 
 // Option configures a Server.
 type Option func(*Server)
@@ -45,6 +58,11 @@ func New(st store.Store, log *slog.Logger, opts ...Option) *Server {
 		model: scoring.DefaultModel,
 		log:   log,
 		now:   scoring.Now,
+
+		verifier: FixtureVerifier{},
+		// A development default so the service starts with no configuration.
+		// main overrides it from IDENTITY_KEY and warns when it has not been set.
+		identityKey: []byte("guest-score-development-identity-key"),
 	}
 	for _, o := range opts {
 		o(s)
@@ -65,6 +83,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/reviews", s.handleListReviews)
 	mux.HandleFunc("POST /api/reviews", s.handleCreateReview)
 	mux.HandleFunc("GET /api/stats", s.handleStats)
+	mux.HandleFunc("GET /api/identity/countries", s.handleCountries)
+	mux.HandleFunc("POST /api/identity/resolve", s.handleResolve)
+	mux.HandleFunc("GET /api/guests/{id}/inquiries", s.handleInquiries)
+	mux.HandleFunc("POST /api/guests/{id}/documents", s.handleAttachDocument)
 
 	return withRecover(s.log, withCORS(withLogging(s.log, mux)))
 }
