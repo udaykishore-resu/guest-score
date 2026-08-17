@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -126,7 +127,7 @@ func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
 	// Already on file?
 	if g, found := s.store.ResolveByDocument(hash); found {
 		s.recordInquiry(g.ID, req)
-		sum := s.summarise(g, now)
+		sum := s.summarise(r.Context(), g, now)
 		writeJSON(w, http.StatusOK, resolveResponse{
 			Matched: true, Guest: &sum, Document: view, Verification: vview,
 			Notice: portabilityNotice(g, doc),
@@ -167,8 +168,9 @@ func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordInquiry(created.ID, req)
+	s.reindexGuest(r.Context(), created.ID)
 
-	sum := s.summarise(created, now)
+	sum := s.summarise(r.Context(), created, now)
 	writeJSON(w, http.StatusCreated, resolveResponse{
 		Matched: false, Opened: true, Guest: &sum, Document: view, Verification: vview,
 		Notice: portabilityNotice(created, doc),
@@ -214,9 +216,9 @@ func (s *Server) recordInquiry(guestID string, req resolveRequest) {
 }
 
 // summarise builds the directory-shaped view of a guest with their score.
-func (s *Server) summarise(g domain.Guest, now scoring.Time) GuestSummary {
+func (s *Server) summarise(ctx context.Context, g domain.Guest, now scoring.Time) GuestSummary {
 	reviews, _ := s.store.ReviewsForGuest(g.ID)
-	return GuestSummary{Guest: g, Score: scoring.Compute(reviews, now, s.model)}
+	return GuestSummary{Guest: g, Score: s.scorer.Score(ctx, g.ID, reviews, now)}
 }
 
 // handleInquiries returns who has pulled this guest's file.
@@ -295,7 +297,7 @@ func (s *Server) handleAttachDocument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updated, _ := s.store.GetGuest(g.ID)
-	sum := s.summarise(updated, now)
+	sum := s.summarise(r.Context(), updated, now)
 	writeJSON(w, http.StatusCreated, resolveResponse{
 		Matched: true, Guest: &sum,
 		Document: &documentView{

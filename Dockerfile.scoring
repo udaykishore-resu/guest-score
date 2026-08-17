@@ -1,0 +1,33 @@
+# Guest Score scoring service.
+#
+# Separate from the API because the model is the part that gets audited and
+# versioned: it needs to be deployable, and rollback-able, on its own schedule.
+# The process holds no data and opens no outbound connection — records arrive in
+# the request and a score goes back — which is why this image can be distroless
+# with nothing in it but the binary.
+
+FROM golang:1.24-alpine AS build
+WORKDIR /src
+
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
+
+COPY backend/ ./
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/scoringd ./cmd/scoringd
+
+FROM gcr.io/distroless/static-debian12:nonroot
+WORKDIR /app
+COPY --from=build /out/scoringd /app/scoringd
+
+ENV GS_GRPC_ADDR=:9090
+EXPOSE 9090
+
+# No HEALTHCHECK here on purpose. This is a gRPC-only, shell-less image, so
+# there is nothing to exec: Docker's healthcheck cannot speak gRPC and
+# grpc_health_probe would mean shipping a second binary purely to satisfy it.
+# Kubernetes has a native gRPC probe and the manifests use it against
+# grpc.health.v1, which the service registers. Compose starts this with
+# depends_on: service_started and lets the API's own retry policy cover the gap.
+
+USER nonroot:nonroot
+ENTRYPOINT ["/app/scoringd"]

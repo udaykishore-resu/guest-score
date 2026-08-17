@@ -1,0 +1,229 @@
+syntax = "proto3";
+
+// Package scoring.v1 is the wire contract for the bureau's scoring engine.
+//
+// Scoring is extracted into its own service for a reason specific to this
+// domain rather than generic microservice enthusiasm: the model is the
+// regulated part. A bureau has to be able to state which model version produced
+// a score, reproduce it on demand, and change it under review without
+// redeploying the whole API. A separate service with a versioned wire contract
+// makes that boundary explicit.
+//
+// The function behind it stays pure — records in, score out, clock injected —
+// so the same code answers an RPC and an in-process call. An empty
+// GS_SCORING_GRPC means the API links it directly and skips the hop entirely.
+//
+// Field numbering mirrors internal/scoring.Score one-for-one. Keeping the two
+// aligned is deliberate: a lossy projection here would mean the score shown
+// over gRPC and the score computed in-process could disagree, and "which path
+// served this?" is not a question a disputed score should ever raise.
+package scoring.v1;
+
+option go_package = "github.com/udaykishore-resu/guest-score/backend/internal/gen/scoringv1;scoringv1";
+
+import "google/protobuf/timestamp.proto";
+
+service ScoringService {
+  // Compute scores one guest's stay records.
+  rpc Compute(ComputeRequest) returns (ComputeResponse);
+
+  // ComputeBatch scores many guests in one call. The directory renders every
+  // guest on the page and would otherwise issue one RPC each; batching keeps
+  // that to a single round trip.
+  rpc ComputeBatch(ComputeBatchRequest) returns (ComputeBatchResponse);
+
+  // DescribeModel publishes the weights and constants in force. The API serves
+  // this straight through to /api/scoring-model, so the published model cannot
+  // drift from the one actually applied.
+  rpc DescribeModel(DescribeModelRequest) returns (DescribeModelResponse);
+}
+
+// --- Input records -----------------------------------------------------------
+
+message Ratings {
+  int32 house_rules = 1;
+  int32 property_care = 2;
+  int32 communication = 3;
+  int32 noise = 4;
+  int32 accuracy = 5;
+}
+
+message Incident {
+  string type = 1;      // domain.IncidentType
+  string severity = 2;  // minor | moderate | severe
+  string note = 3;
+  repeated string evidence = 4;
+}
+
+message Commendation {
+  string type = 1;      // domain.CommendationType
+  string note = 2;
+}
+
+// Dispute travels with the record because the engine, not the caller, decides
+// what a disputed record does to a score. Letting the caller pre-filter would
+// put that policy in two places and let them disagree.
+message Dispute {
+  string status = 1;    // "" | open | upheld | rejected
+  string reason = 2;
+  string resolution = 3;
+  google.protobuf.Timestamp raised_at = 4;
+  google.protobuf.Timestamp resolved_at = 5;
+}
+
+message Review {
+  string id = 1;
+  string guest_id = 2;
+  string host_id = 3;
+  string member_id = 4;
+  string stay_id = 5;
+  Ratings ratings = 6;
+  repeated Incident incidents = 7;
+  repeated Commendation commendations = 8;
+  google.protobuf.Timestamp check_in = 9;
+  google.protobuf.Timestamp check_out = 10;
+  google.protobuf.Timestamp submitted_at = 11;
+  Dispute dispute = 12;
+}
+
+// --- Score -------------------------------------------------------------------
+
+message DimensionScore {
+  string dimension = 1;
+  string label = 2;
+  double average = 3;
+  double weight = 4;
+  double contributes = 5;
+}
+
+// Factor is one human-readable reason the score is what it is. The disclosure
+// requires a guest be told why, not just what; these are that answer.
+message Factor {
+  string kind = 1;  // strength | concern | penalty | bonus | context
+  string description = 2;
+  double impact = 3;
+}
+
+message Score {
+  bool rated = 1;
+  double composite = 2;
+
+  string tier = 3;
+  int32 discount_percent = 4;
+  double deposit_multiplier = 5;
+  string tier_note = 6;
+  bool flagged = 7;
+  double points_to_next_tier = 8;
+  string next_tier = 9;
+
+  string confidence = 10;
+  string handling = 11;
+  string headline = 12;
+
+  int32 stay_count = 13;
+  int32 disputed_count = 14;
+  double effective_stay_count = 15;
+  int32 incident_count = 16;
+  int32 commendation_count = 17;
+
+  double raw_average = 18;
+  double adjusted_average = 19;
+  double base_score = 20;
+  double incident_penalty = 21;
+  double commendation_bonus = 22;
+  double tenure_bonus = 23;
+  double tenure_years = 24;
+
+  repeated DimensionScore dimensions = 25;
+  repeated Factor factors = 26;
+
+  // model_version identifies the exact constants used, and evaluated_at the
+  // instant they were applied to. A stored score missing either is not
+  // reproducible, and a bureau score that cannot be reproduced cannot be
+  // defended when the guest disputes it.
+  string model_version = 27;
+  google.protobuf.Timestamp evaluated_at = 28;
+}
+
+// --- RPCs --------------------------------------------------------------------
+
+message ComputeRequest {
+  string guest_id = 1;
+  repeated Review reviews = 2;
+
+  // evaluated_at pins the clock. Absent means server time. Pinning it is what
+  // lets a dispute review reproduce the score exactly as it stood on a
+  // given day.
+  google.protobuf.Timestamp evaluated_at = 3;
+}
+
+message ComputeResponse {
+  string guest_id = 1;
+  Score score = 2;
+}
+
+message ComputeBatchRequest {
+  repeated ComputeRequest requests = 1;
+
+  // Applied to every request that does not carry its own. One instant for the
+  // whole page means two guests cannot be ranked against different clocks.
+  google.protobuf.Timestamp evaluated_at = 2;
+}
+
+message ComputeBatchResponse {
+  repeated ComputeResponse responses = 1;  // parallel to requests, same order
+}
+
+message DescribeModelRequest {}
+
+message Tier {
+  double min = 1;
+  string name = 2;
+  int32 discount_percent = 3;
+  double deposit_multiplier = 4;
+  bool flagged = 5;
+  string note = 6;
+}
+
+message DimensionWeight {
+  string dimension = 1;
+  string label = 2;
+  double weight = 3;
+}
+
+message IncidentCatalogEntry {
+  string type = 1;
+  string label = 2;
+  double base_penalty = 3;
+  string description = 4;
+}
+
+message CommendationCatalogEntry {
+  string type = 1;
+  string label = 2;
+  double base_bonus = 3;
+  string description = 4;
+}
+
+message DescribeModelResponse {
+  string model_version = 1;
+  repeated DimensionWeight dimensions = 2;
+  double review_half_life_days = 3;
+  double incident_half_life_days = 4;
+  double commendation_half_life_days = 5;
+  double prior_mean = 6;
+  double prior_strength = 7;
+  double score_min = 8;
+  double score_max = 9;
+  double new_guest_score = 10;
+  double anchor_quality = 11;
+  double anchor_score = 12;
+  double points_per_quality_point_up = 13;
+  double points_per_quality_point_down = 14;
+  double tenure_points_per_year = 15;
+  double tenure_max_points = 16;
+  repeated Tier tiers = 17;
+  repeated IncidentCatalogEntry incident_catalog = 18;
+  repeated CommendationCatalogEntry commendation_catalog = 19;
+  map<string, double> severity_multipliers = 20;
+}

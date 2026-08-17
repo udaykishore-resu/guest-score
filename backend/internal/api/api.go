@@ -14,8 +14,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/udaykishore-resu/guest-score/backend/internal/cache"
 	"github.com/udaykishore-resu/guest-score/backend/internal/domain"
 	"github.com/udaykishore-resu/guest-score/backend/internal/scoring"
+	"github.com/udaykishore-resu/guest-score/backend/internal/scoringsvc"
+	"github.com/udaykishore-resu/guest-score/backend/internal/search"
 	"github.com/udaykishore-resu/guest-score/backend/internal/store"
 )
 
@@ -35,6 +38,15 @@ type Server struct {
 	// identityKey is the HMAC key for document hashes. Rotating it orphans
 	// every stored hash, so it belongs in configuration, not in code.
 	identityKey []byte
+
+	// The four optional dependencies. Each is always non-nil — an unconfigured
+	// one is a no-op implementation rather than a nil check at every call site
+	// — so no handler below has to know whether the infrastructure exists.
+	scorer  scoringsvc.Scorer
+	cache   cache.Cache
+	search  search.Index
+	checks  []HealthCheck
+	graphql http.Handler
 }
 
 // WithVerifier overrides the document verifier.
@@ -63,9 +75,18 @@ func New(st store.Store, log *slog.Logger, opts ...Option) *Server {
 		// A development default so the service starts with no configuration.
 		// main overrides it from IDENTITY_KEY and warns when it has not been set.
 		identityKey: []byte("guest-score-development-identity-key"),
+
+		cache:  cache.Nop{},
+		search: search.Nop{},
 	}
 	for _, o := range opts {
 		o(s)
+	}
+	// Defaulted after the options so WithScorer can supply a remote one, and so
+	// a caller who supplies neither still gets a working in-process scorer
+	// rather than a nil dereference on the first request.
+	if s.scorer == nil {
+		s.scorer = scoringsvc.NewLocal(s.model)
 	}
 	return s
 }
@@ -87,6 +108,16 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/identity/resolve", s.handleResolve)
 	mux.HandleFunc("GET /api/guests/{id}/inquiries", s.handleInquiries)
 	mux.HandleFunc("POST /api/guests/{id}/documents", s.handleAttachDocument)
+	mux.HandleFunc("GET /api/search", s.handleSearch)
+	mux.HandleFunc("POST /api/admin/reindex", s.handleReindex)
+
+	// GraphQL is mounted here rather than in main so it shares the same
+	// recovery, logging and CORS middleware as everything else.
+	if s.graphql != nil {
+		mux.Handle("/graphql", s.graphql)
+		mux.Handle("/graphql/", s.graphql)
+		mux.Handle("/graphiql", s.graphql)
+	}
 
 	return withRecover(s.log, withCORS(withLogging(s.log, mux)))
 }
@@ -119,14 +150,6 @@ type createReviewResponse struct {
 }
 
 // --- Handlers ----------------------------------------------------------------
-
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "ok",
-		"time":   time.Now().UTC(),
-		"service": "guest-score",
-	})
-}
 
 // handleScoringModel publishes the weights and constants. This is what makes
 // FR-007 self-documenting: a client can render the exact model the score used
@@ -198,7 +221,7 @@ func (s *Server) handleListGuests(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, r, err)
 			return
 		}
-		sc := scoring.Compute(reviews, now, s.model)
+		sc := s.scorer.Score(r.Context(), g.ID, reviews, now)
 
 		if tier != "" && !strings.EqualFold(sc.Tier, tier) {
 			continue
@@ -283,7 +306,7 @@ func (s *Server) handleGetGuest(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	sc := scoring.Compute(reviews, s.now(), s.model)
+	sc := s.scorer.Score(r.Context(), id, reviews, s.now())
 
 	detail := GuestDetail{
 		GuestSummary: GuestSummary{Guest: g, Score: sc},
@@ -312,7 +335,7 @@ func (s *Server) handleGetScore(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, scoring.Compute(reviews, s.now(), s.model))
+	writeJSON(w, http.StatusOK, s.scorer.Score(r.Context(), id, reviews, s.now()))
 }
 
 func (s *Server) handleCreateGuest(w http.ResponseWriter, r *http.Request) {
@@ -334,7 +357,7 @@ func (s *Server) handleCreateGuest(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, GuestSummary{
 		Guest: created,
-		Score: scoring.Compute(nil, s.now(), s.model),
+		Score: s.scorer.Score(r.Context(), created.ID, nil, s.now()),
 	})
 }
 
@@ -372,7 +395,7 @@ func (s *Server) handleCreateReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := s.now()
-	scoreBefore := scoring.Compute(before, now, s.model)
+	scoreBefore := s.scorer.Score(r.Context(), rev.GuestID, before, now)
 
 	created, err := s.store.CreateReview(rev)
 	if err != nil {
@@ -380,17 +403,24 @@ func (s *Server) handleCreateReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The write changed this guest's score, the directory ordering and the
+	// population stats. Invalidate before recomputing so the fresh value below
+	// is the one that gets cached.
+	s.invalidate(r.Context(), rev.GuestID)
+
 	after, err := s.store.ReviewsForGuest(rev.GuestID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	scoreAfter := scoring.Compute(after, now, s.model)
+	scoreAfter := s.scorer.Score(r.Context(), rev.GuestID, after, now)
 
 	delta := scoreAfter.Composite
 	if scoreBefore.Rated {
 		delta = scoreAfter.Composite - scoreBefore.Composite
 	}
+
+	s.reindexGuest(r.Context(), rev.GuestID)
 
 	writeJSON(w, http.StatusCreated, createReviewResponse{
 		Review:         created,
@@ -461,7 +491,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, r, err)
 			return
 		}
-		sc := scoring.Compute(rs, now, s.model)
+		sc := s.scorer.Score(r.Context(), g.ID, rs, now)
 		if !sc.Rated {
 			unrated++
 			continue

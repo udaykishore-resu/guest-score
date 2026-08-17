@@ -1,0 +1,28 @@
+# Guest Score SPA, served by nginx.
+#
+# Used when the API and the UI are deployed as separate services, which is what
+# the platform stack does so the ingress can route them independently and the
+# static assets can be cached without involving Go. The single-binary layout
+# (Dockerfile plus STATIC_DIR) is still supported and is the simpler choice for
+# a one-container deploy.
+
+FROM node:22-alpine AS build
+WORKDIR /fe
+
+COPY frontend/package*.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+FROM nginx:1.27-alpine
+COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /fe/dist /usr/share/nginx/html
+
+# nginx:alpine writes its pid and temp files under /var; running unprivileged
+# needs those writable, so the manifests mount emptyDirs there rather than this
+# image assuming root.
+EXPOSE 5174
+
+HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
+    CMD ["wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:5174/healthz"]
