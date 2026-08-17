@@ -156,3 +156,7 @@ reshaping the domain. Review authenticity and abuse of the review system are
 out of scope and noted in the spec. The scoring constants are defensible but
 unvalidated against real data; they are centralised in one struct and published
 over the API precisely so they can be tuned.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
