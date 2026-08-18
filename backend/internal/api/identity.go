@@ -16,11 +16,11 @@ import (
 // then resolve it to a bureau file — opening one if this is a first contact.
 
 type resolveRequest struct {
-	Country  domain.Country     `json:"country"`
+	Country  domain.Country      `json:"country"`
 	DocType  domain.DocumentType `json:"document_type"`
-	Number   string             `json:"number"`
-	MemberID string             `json:"member_id,omitempty"`
-	Purpose  string             `json:"purpose,omitempty"`
+	Number   string              `json:"number"`
+	MemberID string              `json:"member_id,omitempty"`
+	Purpose  string              `json:"purpose,omitempty"`
 
 	// Supplied only when opening a new file.
 	Name  string `json:"name,omitempty"`
@@ -28,10 +28,10 @@ type resolveRequest struct {
 }
 
 type resolveResponse struct {
-	Matched bool                `json:"matched"`
-	Opened  bool                `json:"opened"`
-	Guest   *GuestSummary       `json:"guest,omitempty"`
-	Document *documentView      `json:"document,omitempty"`
+	Matched  bool          `json:"matched"`
+	Opened   bool          `json:"opened"`
+	Guest    *GuestSummary `json:"guest,omitempty"`
+	Document *documentView `json:"document,omitempty"`
 
 	// Verification records what the issuing authority said.
 	Verification verificationView `json:"verification"`

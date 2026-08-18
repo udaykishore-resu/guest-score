@@ -29,17 +29,17 @@ type Config struct {
 
 	// IdentityKey is the HMAC key for document hashes. Rotating it orphans
 	// every stored hash, so it is configuration, never a literal in code.
-	IdentityKey       []byte
-	IdentityKeyIsDev  bool
+	IdentityKey      []byte
+	IdentityKeyIsDev bool
 
 	Postgres PostgresConfig
 	DataPath string // file store; used only when Postgres is not configured
 
-	Redis    RedisConfig
-	Elastic  ElasticConfig
-	MQTT     MQTTConfig
-	Scoring  ScoringConfig
-	GraphQL  GraphQLConfig
+	Redis   RedisConfig
+	Elastic ElasticConfig
+	MQTT    MQTTConfig
+	Scoring ScoringConfig
+	GraphQL GraphQLConfig
 }
 
 // PostgresConfig is empty-DSN-means-disabled.

@@ -58,6 +58,25 @@ type Model struct {
 	TenurePointsPerYear float64 `json:"tenure_points_per_year"`
 	TenureMaxPoints     float64 `json:"tenure_max_points"`
 
+	// SoftCeilingStart and SoftFloorStart are where the scale stops being
+	// linear and starts saturating toward the published bounds.
+	//
+	// A hard clamp was tried first and produced a real defect: an exceptional
+	// guest with sustained 5/5 ratings, five commendations and a year of tenure
+	// totalled 1146 raw and was clipped to exactly 1000.0 — as was every other
+	// guest who happened to exceed the ceiling. That destroys the ordering the
+	// score exists to express: the bureau's best guests all tie, and a member
+	// looking at two 1000s cannot tell which is which. It also means further
+	// good behaviour is unrewarded, which is precisely the wrong incentive at
+	// the top of a loyalty scale.
+	//
+	// Above the soft ceiling each additional point buys exponentially less, so
+	// the score approaches ScoreMax without ever reaching it and stays strictly
+	// increasing. The same applies, mirrored, at the floor: a guest with four
+	// severe incidents should still rank below one with three.
+	SoftCeilingStart float64 `json:"soft_ceiling_start"`
+	SoftFloorStart   float64 `json:"soft_floor_start"`
+
 	Tiers []Tier `json:"tiers"`
 }
 
@@ -116,6 +135,12 @@ var DefaultModel = Model{
 	TenurePointsPerYear: 100.0,
 	TenureMaxPoints:     100.0,
 
+	// The top and bottom 10% of the scale saturate. 900 sits a full 100 points
+	// above the Excellent threshold, so no tier boundary falls inside the
+	// compressed region and a tier still means what it says.
+	SoftCeilingStart: 900.0,
+	SoftFloorStart:   100.0,
+
 	// Bands are taken verbatim from the invention disclosure. Deposit
 	// multipliers apply to the property's standard deposit: an Excellent guest
 	// posts a quarter of it, a Poor guest four times — the disclosure's "high
@@ -145,10 +170,10 @@ const (
 type Handling string
 
 const (
-	HandlingVIP         Handling = "vip_treatment"
-	HandlingStandard    Handling = "standard"
-	HandlingWatch       Handling = "watch"
-	HandlingEscalate    Handling = "escalate"
+	HandlingVIP          Handling = "vip_treatment"
+	HandlingStandard     Handling = "standard"
+	HandlingWatch        Handling = "watch"
+	HandlingEscalate     Handling = "escalate"
 	HandlingInsufficient Handling = "insufficient_data"
 )
 
@@ -156,9 +181,9 @@ const (
 type DimensionScore struct {
 	Dimension   domain.Dimension `json:"dimension"`
 	Label       string           `json:"label"`
-	Average     float64          `json:"average"`      // decay-weighted mean, 1-5
-	Weight      float64          `json:"weight"`       // from the model
-	Contributes float64          `json:"contributes"`  // points of the range attributable here
+	Average     float64          `json:"average"`     // decay-weighted mean, 1-5
+	Weight      float64          `json:"weight"`      // from the model
+	Contributes float64          `json:"contributes"` // points of the range attributable here
 }
 
 // Factor is one human-readable reason the score is what it is.
@@ -203,13 +228,13 @@ type Score struct {
 	IncidentCount      int     `json:"incident_count"`
 	CommendationCount  int     `json:"commendation_count"`
 
-	RawAverage         float64 `json:"raw_average"`         // 1-5 before shrinkage
-	AdjustedAverage    float64 `json:"adjusted_average"`    // 1-5 after shrinkage
-	BaseScore          float64 `json:"base_score"`          // from ratings alone, before tenure/events
-	IncidentPenalty    float64 `json:"incident_penalty"`    // points deducted
-	CommendationBonus  float64 `json:"commendation_bonus"`  // points added
-	TenureBonus        float64 `json:"tenure_bonus"`        // points added for length of history
-	TenureYears        float64 `json:"tenure_years"`
+	RawAverage        float64 `json:"raw_average"`        // 1-5 before shrinkage
+	AdjustedAverage   float64 `json:"adjusted_average"`   // 1-5 after shrinkage
+	BaseScore         float64 `json:"base_score"`         // from ratings alone, before tenure/events
+	IncidentPenalty   float64 `json:"incident_penalty"`   // points deducted
+	CommendationBonus float64 `json:"commendation_bonus"` // points added
+	TenureBonus       float64 `json:"tenure_bonus"`       // points added for length of history
+	TenureYears       float64 `json:"tenure_years"`
 
 	Dimensions []DimensionScore `json:"dimensions"`
 	Factors    []Factor         `json:"factors"`
@@ -355,8 +380,8 @@ func Compute(all []domain.Review, now Time, m Model) Score {
 	// Lifting first and clamping, then deducting, guarantees an incident always
 	// moves the score down. Commendations can carry a guest to the ceiling; they
 	// cannot buy immunity.
-	lifted := clamp(base+bonus+tenureBonus, m.ScoreMin, m.ScoreMax)
-	composite := clamp(lifted-penalty, m.ScoreMin, m.ScoreMax)
+	lifted := saturate(base+bonus+tenureBonus, m)
+	composite := saturate(lifted-penalty, m)
 
 	// --- Assemble the explanation -------------------------------------------
 	dims := make([]DimensionScore, 0, len(domain.AllDimensions))
@@ -532,12 +557,12 @@ func buildFactors(
 		})
 	case effective < 4.0:
 		factors = append(factors, Factor{
-			Kind: "context",
+			Kind:        "context",
 			Description: fmt.Sprintf("%.1f effective reviews of evidence. Enough to be indicative, not enough to be conclusive.", effective),
 		})
 	default:
 		factors = append(factors, Factor{
-			Kind: "context",
+			Kind:        "context",
 			Description: fmt.Sprintf("%.1f effective reviews of evidence across %d stays. The score rests on a solid base.", effective, reviewCount),
 		})
 	}
@@ -645,7 +670,7 @@ func handlingFor(score float64, conf Confidence, reviews []domain.Review, now Ti
 		}
 	}
 
-	watchFloor := tierFloor("Fair", m)      // below this the guest is Poor / flagged
+	watchFloor := tierFloor("Fair", m) // below this the guest is Poor / flagged
 	vipFloor := tierFloor("Excellent", m)
 	premiumFloor := tierFloor("Good", m)
 
@@ -737,6 +762,42 @@ func decay(ageDays, halfLifeDays float64) float64 {
 
 func clamp(v, lo, hi float64) float64 {
 	return math.Max(lo, math.Min(hi, v))
+}
+
+// saturate maps a raw total onto the published range, compressing rather than
+// clipping at both ends.
+//
+// Between the two soft bounds it is the identity, so the ordinary case is
+// untouched and the tier thresholds mean exactly what they say. Outside them
+// the excess decays exponentially into the remaining headroom:
+//
+//	930 raw -> 926.8      1146 raw -> 991.5      2000 raw -> 1000.0 (to one decimal)
+//
+// The result is strictly increasing everywhere, which is the property that
+// matters: two guests with different histories never tie merely because both
+// exceeded the scale.
+func saturate(v float64, m Model) float64 {
+	if m.SoftCeilingStart > m.ScoreMin && v > m.SoftCeilingStart {
+		headroom := m.ScoreMax - m.SoftCeilingStart
+		if headroom <= 0 {
+			return m.ScoreMax
+		}
+		// Written as max - headroom*exp(...) rather than start + headroom*(1-exp(...)).
+		// The two are algebraically identical, but the second computes 1-exp(-k),
+		// which for large k rounds to exactly 1 and collapses the result onto the
+		// bound far earlier than float64 precision requires.
+		return m.ScoreMax - headroom*math.Exp(-(v-m.SoftCeilingStart)/headroom)
+	}
+	if m.SoftFloorStart < m.ScoreMax && v < m.SoftFloorStart {
+		headroom := m.SoftFloorStart - m.ScoreMin
+		if headroom <= 0 {
+			return m.ScoreMin
+		}
+		return m.ScoreMin + headroom*math.Exp(-(m.SoftFloorStart-v)/headroom)
+	}
+	// Still clamped as a backstop: a misconfigured model with the soft bounds
+	// outside the range must not publish a score outside the published scale.
+	return clamp(v, m.ScoreMin, m.ScoreMax)
 }
 
 func round1(v float64) float64 { return math.Round(v*10) / 10 }

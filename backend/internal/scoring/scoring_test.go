@@ -37,8 +37,6 @@ func approx(t *testing.T, got, want, tol float64, label string) {
 
 // --- The six mandated cases (Constitution Principle V) -----------------------
 
-
-
 // TestDecay_AcrossYearBoundaries pins the half-life curve itself.
 func TestDecay_AcrossYearBoundaries(t *testing.T) {
 	tests := []struct {
@@ -213,11 +211,6 @@ func TestModel_WeightsSumToOne(t *testing.T) {
 	approx(t, sum, 1.0, 0.0001, "sum of dimension weights")
 }
 
-
-
-
-
-
 // --- helpers -----------------------------------------------------------------
 
 func repeat(n int, r domain.Review) []domain.Review {
@@ -236,7 +229,6 @@ func itoa(f float64) string {
 	return time.Duration(f * float64(time.Hour) * 24).String()
 }
 
-
 // --- Tests anchored to the invention disclosure ------------------------------
 
 // TestScoreRanges_MatchDisclosure pins "Score Ranges and Interpretation"
@@ -244,9 +236,9 @@ func itoa(f float64) string {
 // refused a room; drifting from the spec silently is not acceptable.
 func TestScoreRanges_MatchDisclosure(t *testing.T) {
 	cases := []struct {
-		score    float64
-		tier     string
-		flagged  bool
+		score   float64
+		tier    string
+		flagged bool
 	}{
 		{1000, "Excellent", false},
 		{850, "Excellent", false},

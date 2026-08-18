@@ -1,0 +1,66 @@
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "ui-sans-serif, -apple-system, Segoe UI, Helvetica, Arial, sans-serif",
+    "fontSize": "13px",
+    "primaryColor": "#CCFBF1",
+    "primaryBorderColor": "#0F766E",
+    "primaryTextColor": "#0F172A",
+    "lineColor": "#64748B",
+    "actorBkg": "#EEF2FF",
+    "actorBorder": "#4F46E5",
+    "actorTextColor": "#1E1B4B",
+    "signalColor": "#334155",
+    "signalTextColor": "#0F172A",
+    "noteBkgColor": "#FEF3C7",
+    "noteBorderColor": "#B45309",
+    "noteTextColor": "#451A03",
+    "labelBoxBkgColor": "#F1F5F9",
+    "labelBoxBorderColor": "#94A3B8"
+  }
+}}%%
+sequenceDiagram
+  autonumber
+  actor Mumbai as Mumbai desk<br/>(Taj Colaba)
+  participant API as guest-score-api
+  participant PG as PostgreSQL
+  participant V as Verifier<br/>(UIDAI / passport office)
+  actor Lisbon as Lisbon desk<br/>(never seen this guest)
+
+  rect rgb(248, 250, 252)
+    Note over Mumbai,PG: First contact — a file is opened on a domestic document
+    Mumbai->>API: POST /api/identity/resolve<br/>{country: IN, type: aadhaar, number: ...}
+    API->>API: Validate format + Verhoeff check digit locally
+    Note right of API: A typo caught here costs nothing.<br/>Sent upstream it writes a near-miss<br/>identity number into somebody's log.
+    API->>V: Verify with the issuing authority
+    V-->>API: {status: "simulated"}<br/>no credentials configured
+    API->>API: HMAC-SHA256(key, country‖type‖number)
+    Note right of API: The number is never stored.<br/>Only the keyed hash and the last 4,<br/>which is what makes holding an<br/>Aadhaar-derived value defensible.
+    API->>PG: INSERT guests + identity_documents<br/>(one transaction)
+    PG-->>API: hash is unique → file opened
+    API-->>Mumbai: GS-488122DBCBB0 · tier "New" · 500<br/>deposit 100% · portable: false
+    Note over Mumbai: "This file has no portable document.<br/>Add the guest's passport before they travel."
+  end
+
+  rect rgb(248, 250, 252)
+    Note over Mumbai,PG: The guest adds a passport — the file becomes portable
+    Mumbai->>API: POST /api/guests/{id}/documents<br/>{country: IN, type: passport}
+    API->>PG: INSERT ... ON CONFLICT (hash) DO NOTHING
+    PG-->>API: 1 row → attached
+    API-->>Mumbai: portable: true · notice cleared
+  end
+
+  Note over Mumbai,Lisbon: months later, a different country, a different member
+
+  rect rgb(248, 250, 252)
+    Note over Lisbon,PG: Resolution — the same standing follows the person
+    Lisbon->>API: POST /api/identity/resolve<br/>{country: PT, type: passport, number: ...}
+    API->>API: Same HMAC over the same document
+    API->>PG: SELECT guest_id FROM identity_documents WHERE hash = $1
+    PG-->>API: g_… → GS-488122DBCBB0
+    API->>PG: INSERT INTO inquiries (append-only)
+    Note right of PG: The guest is entitled to know<br/>who pulled their file. An inquiry<br/>never affects the score.
+    API-->>Lisbon: matched: true · opened: false<br/>Rohan Mehta · the record from Mumbai
+  end
+
+  Note over Mumbai,Lisbon: Without the shared hash index, Lisbon opens a second file<br/>and a guest outruns a bad record by crossing a border.

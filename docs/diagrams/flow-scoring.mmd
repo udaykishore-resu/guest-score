@@ -1,0 +1,77 @@
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "ui-sans-serif, -apple-system, Segoe UI, Helvetica, Arial, sans-serif",
+    "fontSize": "13px",
+    "primaryTextColor": "#0F172A",
+    "lineColor": "#64748B",
+    "clusterBkg": "#F8FAFC",
+    "clusterBorder": "#CBD5E1"
+  },
+  "flowchart": { "curve": "basis", "nodeSpacing": 40, "rankSpacing": 40 }
+}}%%
+graph TB
+  %% How a stay history becomes a score. Every stage is pure: no I/O, no clock
+  %% read, evaluation time injected. Same inputs, same output, always — which is
+  %% what makes a score defensible when a guest disputes it.
+
+  IN[/"Stay records for one guest"/] --> DISP{"Under dispute?"}
+
+  DISP -->|"open or upheld"| HELD["Held out entirely"]
+  DISP -->|"none or rejected"| ANY{"Any scoreable<br/>records left?"}
+
+  HELD -.->|"counted, not scored"| ANY
+
+  ANY -->|"no"| NEW["Opening score 500<br/><small>tier 'New' · rated: false</small>"]
+  ANY -->|"yes"| S1
+
+  subgraph pipeline["The calculation"]
+    direction TB
+    S1["<b>1 · Weighted quality</b><br/>five dimensions × published weights"]
+    S2["<b>2 · Recency decay</b><br/>exp half-life · reviews 365d, incidents 180d"]
+    S3["<b>3 · Bayesian shrinkage</b><br/>toward the 3.9 population prior"]
+    S4["<b>4 · Anchored mapping</b><br/>3.9 → 600 · asymmetric up/down"]
+    S5["<b>5 · Tenure</b><br/>+100/yr, capped at 100"]
+    S6["<b>6 · Commendations</b><br/>added, then saturated"]
+    S7["<b>7 · Incident penalties</b><br/>base × severity × decay, deducted after"]
+    S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7
+  end
+
+  S7 --> SAT["<b>8 · Saturate</b><br/>compress above 900 and below 100"]
+
+  SAT --> TIER{"Which tier?"}
+  TIER -->|"≥ 800"| T1["Excellent · 20% off · 0.25× deposit"]
+  TIER -->|"≥ 700"| T2["Good · 10% off · 0.5× deposit"]
+  TIER -->|"≥ 500"| T3["Fair · standard deposit"]
+  TIER -->|"< 500"| T4["Poor · 2× deposit · flagged"]
+
+  T1 --> OUT
+  T2 --> OUT
+  T3 --> OUT
+  T4 --> OUT
+  NEW --> OUT[/"Score + reason codes<br/>+ model version"/]
+
+  N1>"Lift, clamp, then deduct — never both at once.<br/>Applying them together let ten commendations<br/>absorb a severe damage incident and the score<br/>never moved."]
+  S6 -.- N1
+
+  N2>"A hard clamp put every exceptional guest on<br/>exactly 1000.0. Saturation keeps the top of the<br/>scale strictly increasing, so the best guests<br/>stay rankable and good behaviour still pays."]
+  SAT -.- N2
+
+  N3>"Scoring a record the guest is actively contesting<br/>is the thing a dispute process exists to prevent."]
+  HELD -.- N3
+
+  classDef io fill:#EEF2FF,stroke:#4F46E5,stroke-width:1.5px,color:#1E1B4B
+  classDef stage fill:#CCFBF1,stroke:#0F766E,stroke-width:1.5px,color:#042F2E
+  classDef decision fill:#FEF3C7,stroke:#B45309,stroke-width:1.5px,color:#451A03
+  classDef tier fill:#F1F5F9,stroke:#64748B,stroke-width:1.2px,color:#0F172A
+  classDef flag fill:#FEE2E2,stroke:#B91C1C,stroke-width:1.5px,color:#450A0A
+  classDef note fill:#FFFBEB,stroke:#D97706,stroke-width:1px,color:#451A03
+  classDef held fill:#F1F5F9,stroke:#94A3B8,stroke-width:1.2px,color:#334155,stroke-dasharray:4 3
+
+  class IN,OUT io
+  class S1,S2,S3,S4,S5,S6,S7,SAT stage
+  class DISP,ANY,TIER decision
+  class T1,T2,T3,NEW tier
+  class T4 flag
+  class N1,N2,N3 note
+  class HELD held

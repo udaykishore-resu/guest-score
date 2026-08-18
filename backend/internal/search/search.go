@@ -48,7 +48,7 @@ type Doc struct {
 	DocumentCountries []string `json:"document_countries,omitempty"`
 	DocumentTypes     []string `json:"document_types,omitempty"`
 
-	JoinedAt string `json:"joined_at,omitempty"`
+	JoinedAt  string `json:"joined_at,omitempty"`
 	IndexedAt string `json:"indexed_at"`
 }
 
@@ -142,12 +142,12 @@ func DocFor(g domain.Guest, tier string, composite float64, flagged bool, incide
 // because "search is not configured" is a deployment choice, not a fault.
 type Nop struct{}
 
-func (Nop) Ensure(context.Context) error            { return nil }
-func (Nop) Put(context.Context, Doc) error          { return nil }
-func (Nop) PutBatch(context.Context, []Doc) error   { return nil }
-func (Nop) Delete(context.Context, string) error    { return nil }
-func (Nop) Ping(context.Context) error              { return nil }
-func (Nop) Close() error                            { return nil }
+func (Nop) Ensure(context.Context) error          { return nil }
+func (Nop) Put(context.Context, Doc) error        { return nil }
+func (Nop) PutBatch(context.Context, []Doc) error { return nil }
+func (Nop) Delete(context.Context, string) error  { return nil }
+func (Nop) Ping(context.Context) error            { return nil }
+func (Nop) Close() error                          { return nil }
 
 func (Nop) Search(context.Context, Query) (Results, error) {
 	return Results{Engine: EngineInProcess}, nil

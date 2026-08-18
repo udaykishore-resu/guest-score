@@ -1,0 +1,45 @@
+version: 2
+
+# Grouped and monthly rather than per-dependency and weekly. A stream of
+# single-dependency pull requests against a repository with a real integration
+# suite costs more CI minutes than it saves attention, and the grouping means
+# one review covers a coherent set.
+updates:
+  - package-ecosystem: gomod
+    directory: /backend
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      go-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # gRPC and protobuf move together and a major bump regenerates every
+      # stub, so those are deliberate work rather than a dependency update.
+      - dependency-name: google.golang.org/grpc
+        update-types: [version-update:semver-major]
+      - dependency-name: google.golang.org/protobuf
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      frontend-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directories:
+      - /
+    schedule:
+      interval: monthly

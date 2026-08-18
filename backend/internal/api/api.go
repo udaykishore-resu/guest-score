@@ -143,10 +143,10 @@ type listGuestsResponse struct {
 }
 
 type createReviewResponse struct {
-	Review        domain.Review `json:"review"`
-	ScoreBefore   scoring.Score `json:"score_before"`
-	ScoreAfter    scoring.Score `json:"score_after"`
-	CompositeDelta float64      `json:"composite_delta"`
+	Review         domain.Review `json:"review"`
+	ScoreBefore    scoring.Score `json:"score_before"`
+	ScoreAfter     scoring.Score `json:"score_after"`
+	CompositeDelta float64       `json:"composite_delta"`
 }
 
 // --- Handlers ----------------------------------------------------------------
@@ -165,20 +165,22 @@ func (s *Server) handleScoringModel(w http.ResponseWriter, r *http.Request) {
 		dims = append(dims, dimInfo{d, d.Label(), s.model.Weights[d]})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"dimensions":              dims,
-		"review_half_life_days":   s.model.ReviewHalfLife,
-		"incident_half_life_days": s.model.IncidentHalfLife,
-		"prior_mean":              s.model.PriorMean,
-		"prior_strength":          s.model.PriorStrength,
+		"dimensions":                  dims,
+		"review_half_life_days":       s.model.ReviewHalfLife,
+		"incident_half_life_days":     s.model.IncidentHalfLife,
+		"prior_mean":                  s.model.PriorMean,
+		"prior_strength":              s.model.PriorStrength,
 		"commendation_half_life_days": s.model.CommendationHalfLife,
-		"score_min":               s.model.ScoreMin,
-		"score_max":               s.model.ScoreMax,
-		"new_guest_score":         s.model.NewGuestScore,
-		"tenure_points_per_year":  s.model.TenurePointsPerYear,
-		"tenure_max_points":       s.model.TenureMaxPoints,
-		"tiers":                   s.model.Tiers,
-		"incident_catalog":        domain.IncidentCatalog,
-		"commendation_catalog":    domain.CommendationCatalog,
+		"score_min":                   s.model.ScoreMin,
+		"score_max":                   s.model.ScoreMax,
+		"new_guest_score":             s.model.NewGuestScore,
+		"tenure_points_per_year":      s.model.TenurePointsPerYear,
+		"tenure_max_points":           s.model.TenureMaxPoints,
+		"soft_ceiling_start":          s.model.SoftCeilingStart,
+		"soft_floor_start":            s.model.SoftFloorStart,
+		"tiers":                       s.model.Tiers,
+		"incident_catalog":            domain.IncidentCatalog,
+		"commendation_catalog":        domain.CommendationCatalog,
 		"severity_multipliers": map[string]float64{
 			string(domain.SevMinor):    domain.SevMinor.Multiplier(),
 			string(domain.SevModerate): domain.SevModerate.Multiplier(),

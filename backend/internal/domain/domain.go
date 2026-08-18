@@ -223,10 +223,10 @@ const (
 
 // CommendationCatalogEntry describes a commendation type for the API and UI.
 type CommendationCatalogEntry struct {
-	Type      CommendationType `json:"type"`
-	Label     string           `json:"label"`
-	BaseBonus float64          `json:"base_bonus"`
-	Description string         `json:"description"`
+	Type        CommendationType `json:"type"`
+	Label       string           `json:"label"`
+	BaseBonus   float64          `json:"base_bonus"`
+	Description string           `json:"description"`
 }
 
 // CommendationCatalog is the published list of positive events and the points
@@ -375,13 +375,13 @@ type Guest struct {
 	// only keyed hashes and the last four characters (see identity.go).
 	Documents []IdentityDocument `json:"documents"`
 
-	Name      string    `json:"name"`
-	Email     string    `json:"email"`
-	Phone     string    `json:"phone,omitempty"`
-	City      string    `json:"city,omitempty"`
-	Verified  bool      `json:"verified"`
-	JoinedAt  time.Time `json:"joined_at"`
-	AvatarSeed string   `json:"avatar_seed"`
+	Name       string    `json:"name"`
+	Email      string    `json:"email"`
+	Phone      string    `json:"phone,omitempty"`
+	City       string    `json:"city,omitempty"`
+	Verified   bool      `json:"verified"`
+	JoinedAt   time.Time `json:"joined_at"`
+	AvatarSeed string    `json:"avatar_seed"`
 }
 
 // Validate checks the required identity fields on a guest.
@@ -404,12 +404,12 @@ func (g Guest) Validate() FieldErrors {
 
 // Review is one host's structured assessment of one guest for one stay.
 type Review struct {
-	ID          string     `json:"id"`
-	GuestID     string     `json:"guest_id"`
-	HostID      string     `json:"host_id"`
-	HostName    string     `json:"host_name"`
-	PropertyID  string     `json:"property_id"`
-	PropertyName string    `json:"property_name"`
+	ID            string         `json:"id"`
+	GuestID       string         `json:"guest_id"`
+	HostID        string         `json:"host_id"`
+	HostName      string         `json:"host_name"`
+	PropertyID    string         `json:"property_id"`
+	PropertyName  string         `json:"property_name"`
 	MemberID      string         `json:"member_id"`
 	MemberName    string         `json:"member_name"`
 	StayID        string         `json:"stay_id"`

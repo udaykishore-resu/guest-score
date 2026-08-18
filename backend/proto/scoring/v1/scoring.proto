@@ -226,4 +226,9 @@ message DescribeModelResponse {
   repeated IncidentCatalogEntry incident_catalog = 18;
   repeated CommendationCatalogEntry commendation_catalog = 19;
   map<string, double> severity_multipliers = 20;
+
+  // Where the scale stops being linear and starts saturating toward the
+  // bounds. A client rendering the scale needs these to draw it honestly.
+  double soft_ceiling_start = 21;
+  double soft_floor_start = 22;
 }

@@ -1,0 +1,66 @@
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "ui-sans-serif, -apple-system, Segoe UI, Helvetica, Arial, sans-serif",
+    "fontSize": "14px",
+    "primaryTextColor": "#0F172A",
+    "lineColor": "#64748B",
+    "clusterBkg": "#F8FAFC",
+    "clusterBorder": "#CBD5E1"
+  },
+  "flowchart": { "curve": "basis", "nodeSpacing": 34, "rankSpacing": 70, "padding": 12 }
+}}%%
+graph LR
+  %% Guest Score — service and data architecture. Each store carries its own fallback in its label rather than as an edge:
+  %% the fallback is a property of that dependency, not a separate path through
+  %% the system, and drawing four dashed edges out of the API made the picture
+  %% about wiring instead of about structure.
+
+  subgraph clients[" Clients "]
+    direction TB
+    WEB["<b>Front desk console</b><br/>React 19 · Vite<br/><code>:5174</code>"]
+    PMS["<b>Property systems</b><br/>PMS · desk terminal · tablet"]
+  end
+
+  NGINX["<b>nginx</b> — SPA and same-origin proxy<br/><code>/api</code> · <code>/graphql</code> → API"]
+
+  subgraph app[" Application "]
+    direction TB
+    API["<b>guest-score-api</b><br/>Go · REST + GraphQL<br/><code>:8090</code>"]
+    INGEST["<b>MQTT ingest</b><br/>goroutine in the API<br/>dedupes on <code>event_id</code>"]
+    SCORING["<b>guest-score-scoring</b><br/>Go · gRPC + health + reflection<br/><code>:9090</code>"]
+  end
+
+  subgraph bus[" Messaging "]
+    MQ{{"<b>Mosquitto</b><br/>MQTT 3.1.1 · QoS 1"}}
+  end
+
+  subgraph data[" Data "]
+    direction TB
+    PG[("<b>PostgreSQL 17</b><br/>system of record<br/><i>falls back to JSON file</i>")]
+    REDIS[("<b>Redis 7</b><br/>computed scores<br/><i>falls back to no cache</i>")]
+    ES[("<b>Elasticsearch 8</b><br/>fuzzy directory<br/><i>falls back to substring</i>")]
+  end
+
+  WEB -->|HTTPS| NGINX
+  NGINX --> API
+  PMS -->|"publish · QoS 1"| MQ
+  MQ <-->|"<code>guestscore/+/events</code><br/><code>guestscore/_bureau/acks</code>"| INGEST
+  INGEST --> API
+
+  API -->|"pgx"| PG
+  API -->|"RESP"| REDIS
+  API -->|"REST"| ES
+  API -->|"ComputeBatch<br/><i>falls back in-process</i>"| SCORING
+
+  classDef client fill:#EEF2FF,stroke:#4F46E5,stroke-width:1.5px,color:#1E1B4B
+  classDef svc fill:#CCFBF1,stroke:#0F766E,stroke-width:1.5px,color:#042F2E
+  classDef store fill:#FEF3C7,stroke:#B45309,stroke-width:1.5px,color:#451A03
+  classDef broker fill:#F3E8FF,stroke:#7E22CE,stroke-width:1.5px,color:#3B0764
+  classDef edgecls fill:#E0F2FE,stroke:#0369A1,stroke-width:1.5px,color:#082F49
+
+  class WEB,PMS client
+  class API,SCORING,INGEST svc
+  class PG,REDIS,ES store
+  class MQ broker
+  class NGINX edgecls

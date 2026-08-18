@@ -96,7 +96,7 @@ func (e *Elastic) do(ctx context.Context, method, path string, body any, out any
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 300 {
 		// Cap the body: an Elasticsearch error can carry a full stack trace and
@@ -257,7 +257,7 @@ func (e *Elastic) PutBatch(ctx context.Context, docs []Doc) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return fmt.Errorf("bulk index: %s: %s", resp.Status, strings.TrimSpace(string(snippet)))

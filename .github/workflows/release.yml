@@ -1,0 +1,110 @@
+name: Release
+
+# Publishes the three images to GitHub Container Registry on a version tag, and
+# lets you dry-run the whole thing by hand before cutting one.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build but do not push"
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write        # for the provenance attestation
+  attestations: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # Nothing gets published that has not passed the same gates as a pull
+  # request. Duplicating the checks here rather than trusting that CI ran on the
+  # tagged commit closes the window where a tag is pushed to an untested SHA.
+  verify:
+    name: Re-verify before publishing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: backend/go.sum
+      - working-directory: backend
+        run: |
+          go mod verify
+          go build ./...
+          go vet ./...
+          go test ./... -race
+
+  images:
+    name: Build and push ${{ matrix.name }}
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: api,     dockerfile: Dockerfile }
+          - { name: scoring, dockerfile: Dockerfile.scoring }
+          - { name: web,     dockerfile: Dockerfile.web }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push' || inputs.dry_run == false
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.name }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          # arm64 as well as amd64: an Apple Silicon laptop is the most likely
+          # place someone pulls this, and an amd64-only image runs there under
+          # emulation with a startling performance cliff.
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=release-${{ matrix.name }}
+          cache-to: type=gha,scope=release-${{ matrix.name }},mode=max
+          provenance: true
+          sbom: true
+
+      # A signed statement of which workflow, from which commit, produced this
+      # digest. It is what lets a deployment verify the image came from here
+      # rather than from someone with push access to the registry.
+      - name: Attest provenance
+        if: github.event_name == 'push' || inputs.dry_run == false
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

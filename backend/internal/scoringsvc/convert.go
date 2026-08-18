@@ -34,7 +34,11 @@ import (
 // a hash changes when an unrelated field is reordered and says nothing to a
 // human reading an audit trail. Bump it whenever a change would move a score,
 // and only then.
-const ModelVersion = "2026.08-anchored-1000"
+// 2026.08.2 replaced the hard clamp at the bounds with exponential
+// saturation, so scores above 900 and below 100 shifted. Anything stored under
+// the previous version is not reproducible under this one, which is exactly
+// what a version string is for.
+const ModelVersion = "2026.08.2-saturating-1000"
 
 func tsOrNil(t time.Time) *timestamppb.Timestamp {
 	if t.IsZero() {
@@ -261,6 +265,8 @@ func ModelToProto(m scoring.Model) *pb.DescribeModelResponse {
 		PointsPerQualityPointDown: m.PointsPerDown,
 		TenurePointsPerYear:       m.TenurePointsPerYear,
 		TenureMaxPoints:           m.TenureMaxPoints,
+		SoftCeilingStart:          m.SoftCeilingStart,
+		SoftFloorStart:            m.SoftFloorStart,
 		SeverityMultipliers: map[string]float64{
 			string(domain.SevMinor):    domain.SevMinor.Multiplier(),
 			string(domain.SevModerate): domain.SevModerate.Multiplier(),

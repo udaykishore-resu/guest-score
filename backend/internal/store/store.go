@@ -82,8 +82,8 @@ type FileStore struct {
 }
 
 type snapshot struct {
-	Version int             `json:"version"`
-	SavedAt time.Time       `json:"saved_at"`
+	Version   int              `json:"version"`
+	SavedAt   time.Time        `json:"saved_at"`
 	Guests    []domain.Guest   `json:"guests"`
 	Reviews   []domain.Review  `json:"reviews"`
 	Inquiries []domain.Inquiry `json:"inquiries,omitempty"`

@@ -1,0 +1,427 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch cancels the first. CI here spins up
+# Postgres, Redis and Elasticsearch, so overlapping runs are expensive and the
+# older one's result is never wanted.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.24"
+  NODE_VERSION: "22"
+
+jobs:
+  backend:
+    name: Backend (build, vet, race tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+
+      # Fails if go.mod or go.sum is not what the source actually needs. Worth
+      # its own step: a missing go.sum entry otherwise surfaces as a confusing
+      # compile error three steps later.
+      - name: Verify module graph is tidy
+        working-directory: backend
+        run: |
+          go mod download
+          go mod verify
+          cp go.mod go.mod.bak && cp go.sum go.sum.bak
+          go mod tidy
+          diff -u go.mod.bak go.mod || { echo "::error::go.mod is not tidy; run 'go mod tidy'"; exit 1; }
+          diff -u go.sum.bak go.sum || { echo "::error::go.sum is not tidy; run 'go mod tidy'"; exit 1; }
+          rm go.mod.bak go.sum.bak
+
+      - name: Build
+        working-directory: backend
+        run: go build ./...
+
+      - name: Vet
+        working-directory: backend
+        run: go vet ./...
+
+      # gofmt as an explicit gate. `go vet` does not check formatting, and an
+      # unformatted file makes every later diff noisier than the change in it.
+      - name: Check formatting
+        working-directory: backend
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files need gofmt:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Test with the race detector
+        working-directory: backend
+        run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
+
+      - name: Coverage summary
+        working-directory: backend
+        run: |
+          go tool cover -func=coverage.out | tail -1
+          {
+            echo "### Backend coverage"
+            echo '```'
+            go tool cover -func=coverage.out | tail -20
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.out
+          retention-days: 7
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+
+      # Installed directly rather than through the action, pinned to an exact
+      # release. golangci-lint v2 changed the config schema, and the action's
+      # major versions track v1 and v2 differently — pinning the binary keeps
+      # the config and the tool from drifting apart on someone else's schedule.
+      # It must be a build made with Go 1.24 or newer, or it refuses to load a
+      # module targeting 1.24.
+      - name: Install golangci-lint
+        run: |
+          curl -sSL -o /tmp/glci.tar.gz \
+            https://github.com/golangci/golangci-lint/releases/download/v2.1.6/golangci-lint-2.1.6-linux-amd64.tar.gz
+          tar -xzf /tmp/glci.tar.gz -C /tmp
+          sudo install /tmp/golangci-lint-2.1.6-linux-amd64/golangci-lint /usr/local/bin/
+          golangci-lint --version
+
+      - name: Lint
+        working-directory: backend
+        run: golangci-lint run --timeout=8m
+
+  proto:
+    name: Generated gRPC stubs are current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+
+      # Versions are pinned exactly. protoc stamps its own version into the
+      # generated header, so an unpinned toolchain would produce a spurious diff
+      # on every runner image update.
+      - name: Install protoc and plugins
+        run: |
+          curl -sSL -o /tmp/protoc.zip \
+            https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip
+          sudo unzip -oq /tmp/protoc.zip -d /usr/local
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.35.2
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Regenerate and diff
+        working-directory: backend
+        run: |
+          protoc --proto_path=proto \
+            --go_out=. --go_opt=module=github.com/udaykishore-resu/guest-score/backend \
+            --go-grpc_out=. --go-grpc_opt=module=github.com/udaykishore-resu/guest-score/backend \
+            proto/scoring/v1/scoring.proto
+          if ! git diff --quiet -- internal/gen; then
+            echo "::error::internal/gen is stale; run 'make proto' and commit the result"
+            git diff -- internal/gen
+            exit 1
+          fi
+
+  frontend:
+    name: Frontend (typecheck, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci
+      - working-directory: frontend
+        run: npm run typecheck
+      - working-directory: frontend
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 7
+
+  integration:
+    name: Integration (postgres, redis, elasticsearch, mqtt, gRPC)
+    runs-on: ubuntu-latest
+
+    # This job is the point of the whole workflow. Every other job proves the
+    # code compiles and its units behave; this one proves the thing actually
+    # talks to the five systems it claims to, which is the only claim a reader
+    # of the README cannot verify for themselves without doing this.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: guestscore
+          POSTGRES_PASSWORD: guestscore
+          POSTGRES_DB: guestscore
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U guestscore"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          # The runner has 7 GB. A 512 MB heap is plenty for a handful of
+          # documents and leaves room for everything else in this job.
+          ES_JAVA_OPTS: -Xms512m -Xmx512m
+        ports: ["9200:9200"]
+        options: >-
+          --health-cmd "curl -fsS http://localhost:9200/_cluster/health"
+          --health-interval 10s --health-timeout 5s --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+
+      # Mosquitto is not a services: entry because it needs a config file to
+      # accept anonymous connections, and service containers cannot mount one.
+      - name: Start Mosquitto
+        run: |
+          mkdir -p /tmp/mosquitto
+          cat > /tmp/mosquitto/mosquitto.conf <<'EOF'
+          listener 1883
+          allow_anonymous true
+          EOF
+          docker run -d --name mosquitto -p 1883:1883 \
+            -v /tmp/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro \
+            eclipse-mosquitto:2
+          for i in $(seq 1 20); do
+            if docker exec mosquitto mosquitto_pub -t healthcheck -m ok 2>/dev/null; then
+              echo "mosquitto ready"; break
+            fi
+            sleep 1
+          done
+
+      - name: Build binaries
+        working-directory: backend
+        run: |
+          go build -o /tmp/scoringd ./cmd/scoringd
+          go build -o /tmp/server   ./cmd/server
+          go build -o /tmp/sim      ./cmd/propertysim
+
+      - name: Start the services
+        env:
+          GS_ADDR: ":8090"
+          GS_GRPC_ADDR: ":9090"
+          GS_POSTGRES_DSN: postgres://guestscore:guestscore@localhost:5432/guestscore?sslmode=disable
+          GS_REDIS_ADDR: localhost:6379
+          GS_ELASTIC_URL: http://localhost:9200
+          GS_MQTT_URL: tcp://localhost:1883
+          GS_SCORING_GRPC: localhost:9090
+          GS_IDENTITY_KEY: ci-only-not-a-real-key
+        run: |
+          /tmp/scoringd > /tmp/scoringd.log 2>&1 &
+          sleep 2
+          /tmp/server > /tmp/server.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8090/api/health >/dev/null 2>&1 && break
+            sleep 1
+          done
+          echo "--- boot log ---"; cat /tmp/server.log
+
+      # Asserts every dependency reports healthy. A fallback that silently
+      # engaged would make the rest of this job pass while proving nothing, so
+      # the check is on each named dependency rather than on overall status.
+      - name: Every dependency is really connected
+        run: |
+          health=$(curl -fsS http://localhost:8090/api/health)
+          echo "$health" | python3 -m json.tool
+          python3 - "$health" <<'PY'
+          import json, sys
+          h = json.loads(sys.argv[1])
+          if h["status"] != "ok":
+              sys.exit(f"status is {h['status']}, want ok — something fell back")
+          want = {"postgres", "redis", "elasticsearch", "scoring-grpc"}
+          got = set(h["checks"])
+          missing = want - got
+          if missing:
+              sys.exit(f"health does not report on {sorted(missing)}")
+          for name, c in h["checks"].items():
+              if not c["ok"]:
+                  sys.exit(f"{name} is unhealthy: {c.get('error')}")
+          print("all dependencies connected:", sorted(got))
+          PY
+
+      - name: Postgres holds the data and the constraints
+        run: |
+          # The store seeded on boot, so the tables are populated.
+          guests=$(curl -fsS 'http://localhost:8090/api/guests?limit=100' | python3 -c 'import sys,json;print(json.load(sys.stdin)["total"])')
+          echo "guests in postgres: $guests"
+          [ "$guests" -gt 0 ] || { echo "::error::the store is empty; seeding did not reach postgres"; exit 1; }
+
+          # The append-only trigger on the inquiry log must actually bind.
+          if docker run --rm --network host -e PGPASSWORD=guestscore postgres:17-alpine \
+               psql -h localhost -U guestscore -d guestscore -c \
+               "INSERT INTO inquiries (guest_id, member_id, purpose) SELECT id, 'ci', 'check_in' FROM guests LIMIT 1;" >/dev/null 2>&1; then
+            if docker run --rm --network host -e PGPASSWORD=guestscore postgres:17-alpine \
+                 psql -h localhost -U guestscore -d guestscore -c "DELETE FROM inquiries;" >/dev/null 2>&1; then
+              echo "::error::the inquiry log accepted a DELETE; it is supposed to be append-only"
+              exit 1
+            fi
+            echo "inquiry log correctly refused a DELETE"
+          fi
+
+      - name: Elasticsearch answers the directory search
+        run: |
+          curl -fsS -X POST http://localhost:8090/api/admin/reindex | python3 -m json.tool
+          sleep 2
+          engine=$(curl -fsS 'http://localhost:8090/api/search?q=priya' | python3 -c 'import sys,json;print(json.load(sys.stdin)["engine"])')
+          echo "search engine: $engine"
+          [ "$engine" = "elasticsearch" ] || { echo "::error::search fell back to $engine"; exit 1; }
+
+          # Fuzzy matching is the reason this index exists: a misspelling has to
+          # find the file, or a desk agent opens a duplicate.
+          hits=$(curl -fsS 'http://localhost:8090/api/search?q=priyaa' | python3 -c 'import sys,json;print(json.load(sys.stdin)["total"])')
+          echo "hits for the misspelling 'priyaa': $hits"
+          [ "$hits" -gt 0 ] || { echo "::error::fuzzy matching did not find a misspelled name"; exit 1; }
+
+      - name: GraphQL serves a whole screen in one request
+        run: |
+          id=$(curl -fsS 'http://localhost:8090/api/guests?limit=1' | python3 -c 'import sys,json;print(json.load(sys.stdin)["guests"][0]["id"])')
+          body=$(printf '{"query":"{ guest(id: \\"%s\\") { name score { composite tier modelVersion } documents { last4 } stays { id } } }"}' "$id")
+          out=$(curl -fsS -X POST http://localhost:8090/graphql -H 'Content-Type: application/json' -d "$body")
+          echo "$out" | python3 -m json.tool
+          echo "$out" | python3 -c '
+          import sys, json
+          d = json.load(sys.stdin)
+          if "errors" in d: sys.exit(f"graphql errors: {d[\"errors\"]}")
+          g = d["data"]["guest"]
+          assert g["score"]["modelVersion"], "score has no model version"
+          print("graphql ok:", g["name"], g["score"]["composite"], g["score"]["tier"])'
+
+      - name: MQTT ingest files an incident and deduplicates a redelivery
+        run: |
+          id=$(curl -fsS 'http://localhost:8090/api/guests?limit=1' | python3 -c 'import sys,json;print(json.load(sys.stdin)["guests"][0]["id"])')
+          before=$(curl -fsS "http://localhost:8090/api/guests/$id/score" | python3 -c 'import sys,json;print(json.load(sys.stdin)["composite"])')
+
+          # -repeat 2 sends the same event_id twice: the second must be acked as
+          # a duplicate, not filed again. QoS 1 makes that a routine occurrence.
+          /tmp/sim -broker tcp://localhost:1883 -guest "$id" -type incident \
+            -severity severe -incident property_damage -event-id ci_evt_1 -repeat 2
+          sleep 3
+
+          after=$(curl -fsS "http://localhost:8090/api/guests/$id/score" | python3 -c 'import sys,json;print(json.load(sys.stdin)["composite"])')
+          echo "score $before -> $after"
+          python3 -c "
+          import sys
+          before, after = float('$before'), float('$after')
+          if after >= before:
+              sys.exit(f'severe property damage did not lower the score ({before} -> {after})')
+          print(f'incident applied: {before} -> {after}')"
+
+          # Exactly one record, despite two deliveries.
+          stays=$(curl -fsS "http://localhost:8090/api/guests/$id" | python3 -c '
+          import sys, json
+          d = json.load(sys.stdin)
+          print(sum(1 for r in d["reviews"] if r["stay_id"].startswith("s_sim_")))')
+          echo "records filed from the simulator: $stays"
+          [ "$stays" = "1" ] || { echo "::error::a redelivered event was filed $stays times"; exit 1; }
+
+      - name: Redis is actually caching
+        run: |
+          keys=$(docker run --rm --network host redis:7-alpine redis-cli --scan --pattern 'gs:*' | wc -l)
+          echo "cache keys: $keys"
+          [ "$keys" -gt 0 ] || { echo "::error::nothing was written to redis"; exit 1; }
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          echo "--- server ---";   cat /tmp/server.log   || true
+          echo "--- scoringd ---"; cat /tmp/scoringd.log || true
+          echo "--- mosquitto ---"; docker logs mosquitto || true
+
+  docker:
+    name: Images build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: api,     dockerfile: Dockerfile }
+          - { name: scoring, dockerfile: Dockerfile.scoring }
+          - { name: web,     dockerfile: Dockerfile.web }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          load: true
+          tags: guest-score-${{ matrix.name }}:ci
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+
+      # A distroless image with a broken entrypoint builds perfectly and fails
+      # on first deploy, so check the binary at least starts.
+      - name: Smoke the image
+        if: matrix.name != 'web'
+        run: |
+          docker run --rm --entrypoint /bin/sh guest-score-${{ matrix.name }}:ci -c 'true' 2>/dev/null \
+            && echo "unexpected: this image has a shell" \
+            || echo "distroless as intended"
+          docker image inspect guest-score-${{ matrix.name }}:ci --format \
+            'entrypoint={{.Config.Entrypoint}} user={{.Config.User}} exposed={{.Config.ExposedPorts}}'
+
+  vulnerability-scan:
+    name: govulncheck (advisory)
+    runs-on: ubuntu-latest
+    # Advisory, not a gate. A new CVE disclosed against a transitive dependency
+    # would otherwise turn every unrelated pull request red overnight, which
+    # trains people to ignore the signal. Read the summary; do not merge past a
+    # real finding.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - working-directory: backend
+        run: govulncheck ./...

@@ -33,11 +33,11 @@ type Country string
 type DocumentType string
 
 const (
-	DocPassport       DocumentType = "passport"
-	DocDriversLicense DocumentType = "drivers_license"
-	DocNationalID     DocumentType = "national_id"
-	DocAadhaar        DocumentType = "aadhaar"
-	DocPAN            DocumentType = "pan"
+	DocPassport        DocumentType = "passport"
+	DocDriversLicense  DocumentType = "drivers_license"
+	DocNationalID      DocumentType = "national_id"
+	DocAadhaar         DocumentType = "aadhaar"
+	DocPAN             DocumentType = "pan"
 	DocResidencePermit DocumentType = "residence_permit"
 )
 
@@ -119,7 +119,7 @@ var countryRules = map[Country]CountryRules{
 		{
 			Type: DocDriversLicense, Pattern: `^[A-Z0-9]{4,20}$`, Authority: "State DMV",
 			Portable: false, Example: "D1234567",
-			Note:     "Format varies by state; the bureau checks length and character class only, then defers to the issuing DMV.",
+			Note: "Format varies by state; the bureau checks length and character class only, then defers to the issuing DMV.",
 		},
 		{
 			Type: DocPassport, Pattern: `^[0-9]{9}$|^[A-Z][0-9]{8}$`, Authority: "US Department of State",
@@ -140,7 +140,7 @@ var countryRules = map[Country]CountryRules{
 		{
 			Type: DocNationalID, Pattern: `^784[0-9]{12}$`, Checksum: "luhn",
 			Authority: "ICP", Portable: false, Example: "784197012345670",
-			Note:      "Emirates ID always begins 784 and ends in a Luhn check digit.",
+			Note: "Emirates ID always begins 784 and ends in a Luhn check digit.",
 		},
 		{
 			Type: DocPassport, Pattern: `^[A-Z0-9]{6,9}$`, Authority: "ICP",

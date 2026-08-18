@@ -30,15 +30,15 @@ func richHistory() []domain.Review {
 	return []domain.Review{
 		{
 			ID: "r1", GuestID: "g1", HostID: "h1", MemberID: "m1", StayID: "s1",
-			Ratings:     domain.Ratings{HouseRules: 5, PropertyCare: 4, Communication: 5, Noise: 4, Accuracy: 5},
-			CheckIn:     at(400), CheckOut: at(397), SubmittedAt: at(396),
+			Ratings: domain.Ratings{HouseRules: 5, PropertyCare: 4, Communication: 5, Noise: 4, Accuracy: 5},
+			CheckIn: at(400), CheckOut: at(397), SubmittedAt: at(396),
 			Commendations: []domain.Commendation{{Type: domain.ComExceptionalCare, Note: "spotless"}},
 		},
 		{
 			ID: "r2", GuestID: "g1", HostID: "h2", MemberID: "m2", StayID: "s2",
-			Ratings:     domain.Ratings{HouseRules: 2, PropertyCare: 2, Communication: 3, Noise: 1, Accuracy: 4},
-			CheckIn:     at(90), CheckOut: at(88), SubmittedAt: at(87),
-			Incidents:   []domain.Incident{{Type: domain.IncNoiseComplaint, Severity: domain.SevSevere, Note: "3am"}},
+			Ratings: domain.Ratings{HouseRules: 2, PropertyCare: 2, Communication: 3, Noise: 1, Accuracy: 4},
+			CheckIn: at(90), CheckOut: at(88), SubmittedAt: at(87),
+			Incidents: []domain.Incident{{Type: domain.IncNoiseComplaint, Severity: domain.SevSevere, Note: "3am"}},
 		},
 		{
 			ID: "r3", GuestID: "g1", HostID: "h3", MemberID: "m3", StayID: "s3",

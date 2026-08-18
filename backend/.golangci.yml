@@ -1,0 +1,94 @@
+# Linter configuration (golangci-lint v2 schema).
+#
+# The set is chosen to catch real defects, not to enforce taste. Anything that
+# would fire on a deliberate, commented decision in this codebase is excluded
+# below, and each exclusion says which decision.
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck      # an ignored error is the most common real bug in Go
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose     # a leaked response body exhausts the connection pool
+    - rowserrcheck  # rows.Err() after a pgx loop; a silent truncation otherwise
+    - misspell
+    - unconvert
+    - errorlint     # %v on an error breaks errors.Is/As, which the store relies on
+    - nilerr        # returning nil after a non-nil error check
+    - copyloopvar
+    - durationcheck
+    - makezero
+    - predeclared
+
+  # Deliberately absent, with reasons:
+  #   lll, wsl, nlreturn  - the comments here explain reasoning and are wrapped
+  #                         by hand; a column rule would only shorten them.
+  #   gochecknoglobals    - DefaultModel, the catalogs and the GraphQL type
+  #                         registry are intentional package-level immutables.
+  #   exhaustruct         - nearly every struct here is built partially on purpose.
+  #   funlen, gocognit    - Compute is one calculation described in stages;
+  #                         splitting it would scatter the stages its comments
+  #                         walk through.
+
+  settings:
+    errcheck:
+      # Deliberate discards are written as `_ =` and stay visible in review.
+      check-blank: false
+    govet:
+      # shadow is off. The pattern it objects to here is `if err := f(); err !=
+      # nil` inside a function that already has an err — which is the idiomatic
+      # Go form, scoped tightly on purpose. Ten such sites, zero of them bugs,
+      # is the definition of a noisy check.
+      enable-all: false
+    misspell:
+      # No locale. The codebase mixes deliberately: API values and enum strings
+      # use US spelling because changing them would be a breaking wire change
+      # ("unauthorized_guests"), while the prose is British. Enforcing either
+      # locale would demand churn in one of the two for no correctness gain.
+      # Without it, misspell still catches genuine typos.
+      ignore-rules:
+        # A fictional surname in the seed data, and the name of an MQTT broker.
+        - Bellweather
+        - mosquitto
+    staticcheck:
+      checks: ["all"]
+
+  exclusions:
+    generated: lax
+    rules:
+      # Generated protobuf code is not ours to lint.
+      - path: internal/gen/
+        linters:
+          - errcheck
+          - govet
+          - staticcheck
+          - unused
+          - misspell
+          - unconvert
+          - errorlint
+
+      # Test helpers whose failure already fails the next assertion.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - bodyclose
+
+      # The MQTT ack is fire-and-forget by design: an ack that cannot be
+      # published must not fail an event that was already applied. The failure
+      # is logged instead.
+      - path: internal/events/mqtt\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt

@@ -201,7 +201,7 @@ func Publish(url, clientID, propertyID string, e Event, username, password strin
 		SetClientID(clientID).
 		SetUsername(username).
 		SetPassword(password).
-		SetConnectTimeout(10 * time.Second).
+		SetConnectTimeout(10*time.Second).
 		// The last will marks the property offline if this client vanishes
 		// without disconnecting cleanly. Retained, so a subscriber that
 		// connects later still learns the property is unreachable — silence
