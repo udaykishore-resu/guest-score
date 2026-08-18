@@ -22,9 +22,14 @@ git clone https://github.com/udaykishore-resu/guest-score && cd guest-score
 make dev
 ```
 
-Open <http://localhost:5173>. It seeds a realistic dataset on first run: no
-database to provision, no credentials, no signup. Every piece of infrastructure
-this repo can use is optional — see [Running against the real stack](#running-against-the-real-stack).
+Open <http://localhost:5173>. `make dev` installs the frontend dependencies on
+first run, seeds a realistic dataset, and needs no database, credentials or
+signup. Every piece of infrastructure this repo can use is optional — see
+[Running against the real stack](#running-against-the-real-stack).
+
+If a port is already taken, `make dev` says so and stops rather than half
+starting. `make stop` clears anything this project left behind, and
+`make dev API_PORT=8091 WEB_PORT=5174` moves both halves out of the way.
 
 ---
 
@@ -249,6 +254,7 @@ Full variable list: [`../dev-stack/.env.example`](../dev-stack/.env.example).
 ```
 make help          list every target
 make dev           API :8090 + SPA :5173, no infrastructure needed
+make stop          free the ports this project uses
 make dev-split     API against the gRPC scoring service
 make test          go test ./... -race -cover
 make lint          go vet + golangci-lint + frontend typecheck
