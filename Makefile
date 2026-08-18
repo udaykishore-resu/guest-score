@@ -10,6 +10,10 @@
 API_PORT ?= 8090
 WEB_PORT ?= 5173
 
+# The goal the user actually typed, so the port-conflict hint can suggest
+# rerunning *that* rather than a hardcoded example. Falls back to `dev`.
+FIRST_GOAL := $(if $(MAKECMDGOALS),$(firstword $(MAKECMDGOALS)),dev)
+
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
@@ -25,18 +29,26 @@ frontend/node_modules: frontend/package-lock.json frontend/package.json
 	@touch frontend/node_modules
 
 preflight: ## Fail early and legibly if a port is already taken
-	@for p in $(API_PORT) $(WEB_PORT); do \
+	@busy=""; \
+	for p in $(API_PORT) $(WEB_PORT); do \
 		if command -v lsof >/dev/null 2>&1 && lsof -ti tcp:$$p >/dev/null 2>&1; then \
+			busy="$$busy $$p"; \
+		fi; \
+	done; \
+	if [ -n "$$busy" ]; then \
+		for p in $$busy; do \
 			echo ""; \
 			echo "  Port $$p is already in use:"; \
 			lsof -i tcp:$$p | sed 's/^/    /'; \
-			echo ""; \
-			echo "  Stop it with:   make stop"; \
-			echo "  Or move ports:  make dev API_PORT=8091 WEB_PORT=5174"; \
-			echo ""; \
-			exit 1; \
-		fi; \
-	done
+		done; \
+		freeapi=$$(p=$(API_PORT); while lsof -ti tcp:$$p >/dev/null 2>&1; do p=$$((p+1)); done; echo $$p); \
+		freeweb=$$(p=$(WEB_PORT); while [ "$$p" = "$$freeapi" ] || lsof -ti tcp:$$p >/dev/null 2>&1; do p=$$((p+1)); done; echo $$p); \
+		echo ""; \
+		echo "  Free them:   $(MAKE) stop API_PORT=$(API_PORT) WEB_PORT=$(WEB_PORT)"; \
+		echo "  Or move on:  $(MAKE) $(FIRST_GOAL) API_PORT=$$freeapi WEB_PORT=$$freeweb"; \
+		echo ""; \
+		exit 1; \
+	fi
 
 stop: ## Stop anything this project left listening on its ports
 	@for p in $(API_PORT) $(WEB_PORT) 9090; do \
