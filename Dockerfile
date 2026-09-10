@@ -6,7 +6,7 @@
 # serves both, which is the right shape for a one-container deploy — the two
 # layouts share the same binary and differ only in whether STATIC_DIR is set.
 
-FROM golang:1.24-alpine AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src
 
 # Dependencies first so a source-only change reuses the module layer. Since the
